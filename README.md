@@ -1,4 +1,5 @@
 # The sims_TruthCatalog package
+This package is intended for code used to write truth catalogs
 
 ## Set-up and testing
 From bash
