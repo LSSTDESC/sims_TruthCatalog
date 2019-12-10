@@ -2,7 +2,6 @@ import os
 import numpy as np
 import h5py
 import sqlite3
-import argparse
 import sys
 from multiprocessing import Process, Lock, BoundedSemaphore
 
@@ -89,10 +88,10 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
     total_gals = self_dict['total_gals']
 
 
-    chunk_start = first_gal   # + ichunk * gals_per_chunk
+    chunk_start = first_gal
     chunk_end = min(first_gal + chunk_size, total_gals)
     with h5py.File(sed_fit_name, 'r') as sed_fit_file:
-        #print("Opened sed_fit_name ", sed_fit_name)
+
         sed_names = sed_fit_file['sed_names'][()]
         sed_names = [s.decode() for s in sed_names]  # becse stored as bytes
 
@@ -103,7 +102,7 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
         print("Start with galaxy #{}, id={}".format(first_gal, galaxy_ids[0]))
 
         print('# galaxies for _process_chunk: ', len(galaxy_ids))
-        sys.stdin.flush()
+        sys.stdout.flush()
         # get the cross-match between the sed fit and cosmoDC2
         cosmo_len = len(cosmoDC2_data['galaxy_id'])
 
@@ -111,8 +110,6 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
                                          galaxy_ids)
         np.testing.assert_array_equal(
             galaxy_ids, cosmoDC2_data['galaxy_id'][crossmatch_dex])
-
-        #print("Did crossmatch")
 
         ra = sed_fit_file['ra'][()][subset]
         dec = sed_fit_file['dec'][()][subset]
@@ -140,7 +137,6 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
             ebv_vals = ebv_model.calculateEbv(equatorialCoordinates=equatorial_coords,
                                               interp=True)
             ebv_vals_init = True
-            #print("Calculated internal extinction")
 
         for i_bp, bp in enumerate('ugrizy'):
             if (i_bp == 0 or i_bp == 5):
@@ -226,13 +222,9 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
             flux_by_band_noMW[bp] = magnified_fluxes
             flux_by_band_MW[bp] = magnified_fluxes_MW
 
-            #print("compute fluxes, added magnification")
-
     #  Open connection to sqlite db and write
-    #print("Done except for db write for chunk starting with galaxy #",
-    #      first_gal)
     print('Time before db write is {}, first gal={}'.format(dt.now(), first_gal))
-    sys.stdin.flush()
+    sys.stdout.flush()
     #return                 #          DEBUG
     if not db_lock.acquire(timeout=120.0):
         print("Failed to acquire db lock, first gal=", first_gal)
@@ -271,7 +263,7 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
         conn.commit()
         db_lock.release()
         print('Time after db write: {}, first_gal={}'.format(dt.now(),first_gal))
-        sys.stdin.flush()
+        sys.stdout.flush()
         if sema is None:
             return
         sema.release()
@@ -319,7 +311,7 @@ class GalaxyTruthWriter(object):
         Do all the 'shared' work (get cosmoDC2 information, figure
         out how to chunk, etc.)
         """
-
+        print('Enter GalaxyTruthWriter.write, time {}'.format(dt.now()))
         db_lock = Lock()
         sema = BoundedSemaphore(self.parallel)
         self_dict = {}
@@ -389,13 +381,13 @@ class GalaxyTruthWriter(object):
         remaining = max_chunk
 
         # For Haswell allow 6000 seconds for 50k chunk size, which is
-        # conservative.   Multiply by 3 (at least!) for knl
+        # conservative.   Multiply by 8 or so for knl
         arch_scale = 0.12
         if self.knl: arch_scale = KNL_FACTOR * arch_scale
         to = np.ceil(self.chunk_size * arch_scale) + 20
-        print("Semaphore timeout value is: ", to)
+        print("Start forking at {}. Semaphore timeout value is: {}".format(dt.now(), to))
 
-
+        # May eliminate this, allong with --call option
         if self.call:
             for i in range(max_chunk):
                 _process_chunk(db_lock, None, self.sed_fit_name,
@@ -432,27 +424,6 @@ class GalaxyTruthWriter(object):
                     pp.join()
                 exit(1)
 
-            
-        # while remaining > 0:
-        #     to_do = min(remaining, max_parallel)
-        #     p_list = []
-        #     for i in range(to_do):
-        #         p = Process(target=_process_chunk,name='chunk_{}'.format(i),
-        #                     args=(db_lock, sema, self.sed_fit_name,
-        #                           cosmoDC2_data,
-        #                           starts[first+i],self_dict, bad_gals))
-        #         p.start()
-        #         #print("started a process")
-        #         p_list.append(p)
-        #     for p in p_list:
-        #         p.join()
-
-        #     print("all processes joined")
-
-        #     remaining = remaining - to_do
-        #     print("remaining is ", remaining)
-        #     first = first + to_do
-
         if not self.dry:
             # Create indexes
             #  Maybe first check that everything got processed?
@@ -461,49 +432,6 @@ class GalaxyTruthWriter(object):
             pass
             #do_indices(self.dbfile)
  
-                  
-        print('done')
+        sys.stdout.flush()          
+        print('done at time ', dt.now())
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Write a truth catalog (sqlite) for galaxies from the specified healpixel')
-    parser.add_argument('output_dir', type=str,
-                        help='Destination directory for output sqlite file')
-    parser.add_argument('--healpixel', '--hpid', dest='hpid',
-                        type=int, default=None,
-                        help='healpixel for which entries will be written')
-    # hpid or 9430 or 10069  are example healpixels which have been fit
-    parser.add_argument('--sed-fit-dir', type=str,
-                        default='/global/projecta/projectdirs/lsst/groups/SSim',
-                        help='where to find sed fit files')
-    parser.add_argument('--magnitude-cut', type=float, default=29.0,
-                        help='only galaxies at least this bright will be include')
-    parser.add_argument('--chunk-size', type=int, default=100000,
-                        help='#galaxies to process in one go')
-    parser.add_argument('--start', type=int, default=0,
-                        help='galaxy to start with, as ordered in sed fit file')
-    parser.add_argument('--nchunk', type=int, default=None,
-                        help='if not None, stop after NCHUNK chunks')
-    parser.add_argument('--dry-run', action='store_true',
-                        help='no computation or database write')
-    parser.add_argument('--max-parallel', dest='parallel', type=int, default=10,
-                        help='Max number of chunks allowed to run concurrently')
-    parser.add_argument('--call', action='store_true',
-                        help='call _process_chunk rather than forking')
-    parser.add_argument('--knl', action='store_true',
-                        help='Use this flag for knl node; default is haswell')
-    args = parser.parse_args()
-    logstring='write_gal_truth invoked with arguments\n  output-dir={}\n'
-    logstring += 'healpixel={}\nsed-fit-dir={}\nmagnitude-cut={}\nchunk-size={}\nchunk={}\nmax-parallel={}\ndry-run={}\ncall={}\nknl={}'
-    print(logstring.format(args.output_dir, args.hpid, args.sed_fit_dir,
-                           args.magnitude_cut,args.chunk_size, args.nchunk,
-                           args.parallel,args.dry_run,args.call, args.knl))
-
-    sed_fit_dir = args.sed_fit_dir
-    assert os.path.isdir(sed_fit_dir)
-    
-    writer = GalaxyTruthWriter(args.output_dir, args.hpid, sed_fit_dir,
-                               args.magnitude_cut, args.chunk_size,
-                               args.start,args.nchunk, args.parallel,
-                               args.dry_run, args.call, args.knl)
-    writer.write()
