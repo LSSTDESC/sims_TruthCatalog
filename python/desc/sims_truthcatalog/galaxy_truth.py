@@ -3,17 +3,20 @@ import numpy as np
 import h5py
 import sqlite3
 import sys
+from datetime import datetime as dt
+
 from multiprocessing import Process, Lock, BoundedSemaphore
 
 from GCR import GCRQuery
 import GCRCatalogs
-from datetime import datetime as dt
 
 import lsst.sims.photUtils as sims_photUtils
 from lsst.sims.catUtils.dust import EBVbase
 
 MAX_PARALLEL= 10    # to be tuned..  May depend on chunk size
 KNL_FACTOR = 8      # KNL is about 8 times slower than Cori. Adjust 
+
+_global_cosmoDC2_data = {}
 
 def _good_indices(galaxies, bad_gs):
     '''
@@ -42,9 +45,6 @@ def _good_indices(galaxies, bad_gs):
     print("# good galaxies found: ", len(good_ixes))
     return good_ixes
 
-
-
-#  Need to move this to static private function
 def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
                    self_dict, bad_gals):
     """
@@ -67,7 +67,6 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
     dry = self_dict['dry']
     chunk_size = self_dict['chunk_size']
     dbfile = self_dict['dbfile']
-
 
     if dry:
         print('_process_chunk invoke for first_gal {}, chunk size {}'.format(first_gal, chunk_size))
@@ -352,7 +351,8 @@ class GalaxyTruthWriter(object):
             sorted_dex = np.argsort(cosmoDC2_data['galaxy_id'])
             for colname in cosmoDC2_data.keys():
                 cosmoDC2_data[colname] = cosmoDC2_data[colname][sorted_dex]
-            self.cosmoDC2_data = cosmoDC2_data
+            #self.cosmoDC2_data = cosmoDC2_data
+            _global_cosmoDC2_data = cosmoDC2_data
             
             bad_ixes = np.where(cosmoDC2_data['mag_r_lsst'][()]> self.mag_cut)
             bad_gals = list([cosmoDC2_data['galaxy_id'][()][i] for i in bad_ixes])
@@ -391,7 +391,7 @@ class GalaxyTruthWriter(object):
         if self.call:
             for i in range(max_chunk):
                 _process_chunk(db_lock, None, self.sed_fit_name,
-                               cosmoDC2_data, starts[i], self_dict,
+                               _global_cosmoDC2_data, starts[i], self_dict,
                                bad_gals)
             return
 
