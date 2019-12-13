@@ -13,6 +13,7 @@ import GCRCatalogs
 import lsst.sims.photUtils as sims_photUtils
 from lsst.sims.catUtils.dust import EBVbase
 
+
 MAX_PARALLEL= 10    # to be tuned..  May depend on chunk size
 KNL_FACTOR = 8      # KNL is about 8 times slower than Cori. Adjust 
 
@@ -44,6 +45,42 @@ def _good_indices(galaxies, bad_gs):
             good_ixes.append(gal_ix)
     print("# good galaxies found: ", len(good_ixes))
     return good_ixes
+
+def _write_sqlite(dbfile, db_lock, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
+                  flux_by_band_noMW):
+    with sqlite3.connect(dbfile) as conn:
+        write_column_descriptions(conn)
+        cursor = conn.cursor()
+
+        cmd = '''CREATE TABLE IF NOT EXISTS truth_summary
+        (id BIGINT, host_galaxy BIGINT, ra DOUBLE, dec DOUBLE,
+        redshift FLOAT, is_variable INT, is_pointsource INT,
+        flux_u FLOAT, flux_g FLOAT, flux_r FLOAT, 
+        flux_i FLOAT, flux_z FLOAT, flux_y FLOAT,
+        flux_u_noMW FLOAT, flux_g_noMW FLOAT, flux_r_noMW FLOAT, 
+        flux_i_noMW FLOAT, flux_z_noMW FLOAT, flux_y_noMW FLOAT)'''
+        cursor.execute(cmd)
+        conn.commit()
+        print("Created table if not exists truth_summary")
+
+        values = ((int(galaxy_ids[i_obj]),int(-1),
+                   ra[i_obj],dec[i_obj],
+                   redshift[i_obj], 0, 0,
+                   flux_by_band_MW['u'][i_obj], flux_by_band_MW['g'][i_obj],
+                   flux_by_band_MW['r'][i_obj], flux_by_band_MW['i'][i_obj],
+                   flux_by_band_MW['z'][i_obj], flux_by_band_MW['y'][i_obj],
+                   flux_by_band_noMW['u'][i_obj], flux_by_band_noMW['g'][i_obj],
+                   flux_by_band_noMW['r'][i_obj], flux_by_band_noMW['i'][i_obj],
+                   flux_by_band_noMW['z'][i_obj], flux_by_band_noMW['y'][i_obj])
+                  for i_obj in good_ixes)
+
+        cursor.executemany('''INSERT INTO truth_summary
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                           values)
+        conn.commit()
+        db_lock.release()
+        print('Time after db write: {}, first_gal={}'.format(dt.now(),first_gal))
+        sys.stdout.flush()
 
 def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
                    self_dict, bad_gals):
@@ -231,43 +268,19 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
             return
         sema.release()
         exit(1)
-        
-    with sqlite3.connect(dbfile) as conn:
-        cursor = conn.cursor()
-        cmd = '''CREATE TABLE IF NOT EXISTS truth_summary
-        (id BIGINT, host_galaxy BIGINT, ra DOUBLE, dec DOUBLE,
-        redshift FLOAT, is_variable INT, is_pointsource INT,
-        flux_u FLOAT, flux_g FLOAT, flux_r FLOAT, 
-        flux_i FLOAT, flux_z FLOAT, flux_y FLOAT,
-        flux_u_noMW FLOAT, flux_g_noMW FLOAT, flux_r_noMW FLOAT, 
-        flux_i_noMW FLOAT, flux_z_noMW FLOAT, flux_y_noMW FLOAT)'''
-        cursor.execute(cmd)
-        conn.commit()
-        print("Created table if not exists truth_summary")
 
-        values = ((int(galaxy_ids[i_obj]),int(-1),
-                   ra[i_obj],dec[i_obj],
-                   redshift[i_obj], 0, 0,
-                   flux_by_band_MW['u'][i_obj], flux_by_band_MW['g'][i_obj],
-                   flux_by_band_MW['r'][i_obj], flux_by_band_MW['i'][i_obj],
-                   flux_by_band_MW['z'][i_obj], flux_by_band_MW['y'][i_obj],
-                   flux_by_band_noMW['u'][i_obj], flux_by_band_noMW['g'][i_obj],
-                   flux_by_band_noMW['r'][i_obj], flux_by_band_noMW['i'][i_obj],
-                   flux_by_band_noMW['z'][i_obj], flux_by_band_noMW['y'][i_obj])
-                  for i_obj in good_ixes)
-
-        cursor.executemany('''INSERT INTO truth_summary
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                           values)
-        conn.commit()
-        db_lock.release()
-        print('Time after db write: {}, first_gal={}'.format(dt.now(),first_gal))
-        sys.stdout.flush()
+    try:
+        _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
+                      flux_by_band_noMW)
         if sema is None:
             return
         sema.release()
         exit(0)
-
+    except:
+        if sema is not None:
+            sema.release()
+        exit(1)
+        
 class GalaxyTruthWriter(object):
     '''
     Writes truth catalog for static galaxies to sqlite3 file for a 
