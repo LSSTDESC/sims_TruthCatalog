@@ -13,6 +13,7 @@ import GCRCatalogs
 import lsst.sims.photUtils as sims_photUtils
 from lsst.sims.catUtils.dust import EBVbase
 
+import desc.sims_truthcatalog.conversion_utils as conversion_utils
 
 MAX_PARALLEL= 10    # to be tuned..  May depend on chunk size
 KNL_FACTOR = 8      # KNL is about 8 times slower than Cori. Adjust 
@@ -32,8 +33,6 @@ def _good_indices(galaxies, bad_gs):
     '''
     bad_ix = 0
     good_ixes = []
-    #print("# galaxies: ",len(galaxies))
-    #print("# of bad_gs: ", len(bad_gs))
     
     for gal_ix in range(0, len(galaxies) ):
         while (bad_gs[bad_ix] < galaxies[gal_ix]):
@@ -46,10 +45,10 @@ def _good_indices(galaxies, bad_gs):
     print("# good galaxies found: ", len(good_ixes))
     return good_ixes
 
-def _write_sqlite(dbfile, db_lock, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
-                  flux_by_band_noMW):
+def _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
+                  flux_by_band_noMW, good_ixes):
     with sqlite3.connect(dbfile) as conn:
-        write_column_descriptions(conn)
+        conversion_utils.write_column_descriptions(conn)
         cursor = conn.cursor()
 
         cmd = '''CREATE TABLE IF NOT EXISTS truth_summary
@@ -61,8 +60,7 @@ def _write_sqlite(dbfile, db_lock, galaxy_ids, ra, dec, redshift, flux_by_band_M
         flux_i_noMW FLOAT, flux_z_noMW FLOAT, flux_y_noMW FLOAT)'''
         cursor.execute(cmd)
         conn.commit()
-        print("Created table if not exists truth_summary")
-
+        #print("Created table if not exists truth_summary")
         values = ((int(galaxy_ids[i_obj]),int(-1),
                    ra[i_obj],dec[i_obj],
                    redshift[i_obj], 0, 0,
@@ -78,9 +76,8 @@ def _write_sqlite(dbfile, db_lock, galaxy_ids, ra, dec, redshift, flux_by_band_M
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                            values)
         conn.commit()
-        db_lock.release()
-        print('Time after db write: {}, first_gal={}'.format(dt.now(),first_gal))
-        sys.stdout.flush()
+
+    #sys.stdout.flush()
 
 def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
                    self_dict, bad_gals):
@@ -259,9 +256,8 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
             flux_by_band_MW[bp] = magnified_fluxes_MW
 
     #  Open connection to sqlite db and write
-    print('Time before db write is {}, first gal={}'.format(dt.now(), first_gal))
+    #print('Time before db write is {}, first gal={}'.format(dt.now(), first_gal))
     sys.stdout.flush()
-    #return                 #          DEBUG
     if not db_lock.acquire(timeout=120.0):
         print("Failed to acquire db lock, first gal=", first_gal)
         if sema is None:
@@ -270,16 +266,20 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
         exit(1)
 
     try:
-        _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
-                      flux_by_band_noMW)
-        if sema is None:
-            return
-        sema.release()
-        exit(0)
-    except:
+        _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift,
+                      flux_by_band_MW, flux_by_band_noMW, good_ixes)
+        db_lock.release()
         if sema is not None:
             sema.release()
-        exit(1)
+
+        print('Time after db write: {}, first_gal={}'.format(dt.now(),first_gal))
+        sys.stdout.flush()
+        exit(0)
+    except Exception as ex:
+        db_lock.release()
+        if sema is not None:
+            sema.release()
+        raise(ex)
         
 class GalaxyTruthWriter(object):
     '''
