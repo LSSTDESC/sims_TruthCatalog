@@ -83,7 +83,10 @@ if __name__ == "__main__":
         out_file.write('#SBATCH ')
         out_file.write('--image={}'.format(our_image))
         out_file.write('#SBATCH -N {}\n'.format(n_hp))
-        out_file.write('#SBATCH -t {}:00:00\n'.format(n_hrs))
+        if (args.debug):
+            out_file.write('#SBATCH -t 0:30:00\n'.format(n_hrs))
+        else:
+            out_file.write('#SBATCH -t {}:00:00\n'.format(n_hrs))
         out_file.write('#SBATCH -o {}\n'.format(slurm_out))
         out_file.write('#SBATCH -e {}\n'.format(slurm_err))
         if (args.debug):
