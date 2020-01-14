@@ -63,3 +63,6 @@ target/
 
 # Backup files
 *~
+
+# Folder for local development and testing, not to be included in distribution
+local
