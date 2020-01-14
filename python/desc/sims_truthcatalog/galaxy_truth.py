@@ -20,6 +20,13 @@ KNL_FACTOR = 8      # KNL is about 8 times slower than Cori. Adjust
 
 _global_cosmoDC2_data = {}
 
+def _logit(log_lock, log_path, to_write):
+    if log_lock is not None:
+        log_lock.acquire()            # timeout?
+    with open(log_path, 'a') as out_file:
+        out_file.write(to_write)
+    if log_lock is not None:
+        log_lock.release()
 def _good_indices(galaxies, bad_gs):
     '''
     Return a list of indices for the good galaxies
@@ -42,7 +49,6 @@ def _good_indices(galaxies, bad_gs):
                 return good_ixes
         if galaxies[gal_ix] < bad_gs[bad_ix] :  # a good one
             good_ixes.append(gal_ix)
-    print("# good galaxies found: ", len(good_ixes))
     return good_ixes
 
 def _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
@@ -79,8 +85,8 @@ def _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
 
     #sys.stdout.flush()
 
-def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
-                   self_dict, bad_gals):
+def _process_chunk(db_lock, log_lock, sema, sed_fit_name, cosmoDC2_data,
+                   first_gal, self_dict, bad_gals):
     """
     Do all chunk-specific work:  compute table contents for a
     collection of galaxies and write to db
@@ -88,6 +94,7 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
     Parameters
     ----------
     db_lock          Used to avoid conflicts writing to sqlite output
+    log_lock         Used to avoid conflicts writing to per-healpixel log
     sema             A semaphore. Release when done
     sed_fit_name     File where sed fits for this healpixel are
     cosmoDC2_data    Values from cosmoDC2 for this healpixel, keyed by
@@ -101,15 +108,18 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
     dry = self_dict['dry']
     chunk_size = self_dict['chunk_size']
     dbfile = self_dict['dbfile']
+    logfile = self_dict['logfile']
 
     if dry:
-        print('_process_chunk invoke for first_gal {}, chunk size {}'.format(first_gal, chunk_size))
+        _logit(log_lock, logfile,
+               '_process_chunk invoke for first_gal {}, chunk size {}'.format(first_gal, chunk_size))
         if sema is None:
             return
         sema.release()
 
-        exit(0)
-
+        #exit(0)
+        return
+    
     lsst_bp_dict = self_dict['lsst_bp_dict']    
     galaxy_ids = []
     ra = []
@@ -131,11 +141,9 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
         gals_this_chunk = chunk_end - chunk_start
         subset = slice(chunk_start, chunk_end)
         galaxy_ids = sed_fit_file['galaxy_id'][()][subset]
+        to_log = 'Start with galaxy #{}, id={}\n# galaxies for _process_chunk: {}\n'.format(first_gal, galaxy_ids[0], len(galaxy_ids))
+        _logit(log_lock, logfile, to_log)
 
-        print("Start with galaxy #{}, id={}".format(first_gal, galaxy_ids[0]))
-
-        print('# galaxies for _process_chunk: ', len(galaxy_ids))
-        sys.stdout.flush()
         # get the cross-match between the sed fit and cosmoDC2
         cosmo_len = len(cosmoDC2_data['galaxy_id'])
 
@@ -153,17 +161,18 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
 
         good_ixes = _good_indices(galaxy_ids.tolist(), bad_gals[0])
         if (len(good_ixes) == 0):
-            if sema is None:
-                return
-            sema.release()
-            exit(0)
-            #return
+            if sema is not None:
+                sema.release()
+            return
+        else:
+            _logit(log_lock, logfile,
+                   'Found {} good indices for chunk starting with {}\n'.format(len(good_ixes), chunk_start))
         flux_by_band_MW = {}
         flux_by_band_noMW = {}
 
         # Calculate E(B-V) for dust extinction in Milky Way along relevant
         # lines of sight
-        band_print="Processing band {}, first gal {}, time {}"
+        band_print="Processing band {}, first gal {}, time {}\n"
         if not ebv_vals_init:
             equatorial_coords = np.array([np.radians(ra), np.radians(dec)])
             ebv_model = EBVbase()
@@ -173,7 +182,8 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
 
         for i_bp, bp in enumerate('ugrizy'):
             if (i_bp == 0 or i_bp == 5):
-                print(band_print.format(bp, first_gal, dt.now()))
+                _logit(log_lock, logfile,
+                       band_print.format(bp, first_gal, dt.now()))
             fluxes_noMW = {}
             fluxes = {}
             for component in ['disk', 'bulge']:
@@ -257,9 +267,10 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
 
     #  Open connection to sqlite db and write
     #print('Time before db write is {}, first gal={}'.format(dt.now(), first_gal))
-    sys.stdout.flush()
+    #sys.stdout.flush()
     if not db_lock.acquire(timeout=120.0):
-        print("Failed to acquire db lock, first gal=", first_gal)
+        _logit(log_lock, logfile,
+               "Failed to acquire db lock, first gal=", first_gal)
         if sema is None:
             return
         sema.release()
@@ -272,8 +283,8 @@ def _process_chunk(db_lock, sema, sed_fit_name, cosmoDC2_data, first_gal,
         if sema is not None:
             sema.release()
 
-        print('Time after db write: {}, first_gal={}'.format(dt.now(),first_gal))
-        sys.stdout.flush()
+        _logit(log_lock, logfile,
+               'Time after db write: {}, first_gal={}\n'.format(dt.now(),first_gal))
         exit(0)
     except Exception as ex:
         db_lock.release()
@@ -289,8 +300,9 @@ class GalaxyTruthWriter(object):
     def __init__(self, output_dir, hpid, sed_fit_dir, mag_cut, chunk_size,
                  start=0, nchunk=None, parallel=10, dry=False, call=False,
                  knl=False):
-        self.sed_fit_dir = os.path.join(sed_fit_dir,
-                                        'DC2/cosmoDC2_v1.1.4/sedLookup')
+        #self.sed_fit_dir = os.path.join(sed_fit_dir,
+        #                                'DC2/cosmoDC2_v1.1.4/sedLookup')
+        self.sed_fit_dir = sed_fit_dir
         assert os.path.isdir(self.sed_fit_dir)
         self.sed_fit_name = os.path.join(self.sed_fit_dir,
                                          'sed_fit_%d.h5' % hpid)
@@ -298,6 +310,9 @@ class GalaxyTruthWriter(object):
         assert os.path.isdir(output_dir)
         self.dbfile = os.path.join(output_dir,
                                    'truth_summary_hp{}.sqlite3'.format(hpid))
+        self.logfile = os.path.join(output_dir,
+                                    'truth_summary_log_hp{}.txt'.format(hpid))
+        logfile = self.logfile
         self.hpid = hpid
         self.mag_cut = mag_cut
         self.chunk_size=chunk_size
@@ -308,6 +323,13 @@ class GalaxyTruthWriter(object):
         self.call = call
         self.knl = knl
 
+        logstring='GalaxyTruthWriter invoked with arguments\n  output-dir={}\n'
+        logstring += 'healpixel={}\nsed_fit_dir={}\nmag_cut={}\nchunk_size={}\nchunk={}\nparallel={}\ndry\n'
+        _logit(None, logfile, logstring.format(output_dir, hpid, sed_fit_dir,
+                                               mag_cut,chunk_size, nchunk,
+                                               parallel,dry))
+
+        
     def do_indices(dbfile):
         with sqlite3.connect(dbfile) as conn:
             cursor = conn.cursor()    
@@ -316,20 +338,24 @@ class GalaxyTruthWriter(object):
             cmd = '''CREATE UNIQUE INDEX IF NOT EXISTS gal_id ON truth_summary (id)'''
             cursor.execute(cmd)
             conn.commit
-            print("created indexes")
-        
+            #print("created indexes")
+
     def write(self):
         """
         Do all the 'shared' work (get cosmoDC2 information, figure
-        out how to chunk, etc.)
+        out how to chunk,  etc.)
         """
-        print('Enter GalaxyTruthWriter.write, time {}'.format(dt.now()))
+        _logit(None, self.logfile,
+               'Enter GalaxyTruthWriter.write, time {}\n'.format(dt.now()))
         db_lock = Lock()
+        log_lock = Lock()
+        self.log_lock = log_lock
         sema = BoundedSemaphore(self.parallel)
         self_dict = {}
         self_dict['dry'] = self.dry
         self_dict['chunk_size'] = self.chunk_size
         self_dict['dbfile'] = self.dbfile
+        self_dict['logfile'] = self.logfile
 
         bad_gals = []
         cosmoDC2_data = {}
@@ -344,7 +370,7 @@ class GalaxyTruthWriter(object):
         else:
             cat = GCRCatalogs.load_catalog('cosmoDC2_v1.1.4_image')
 
-            print("cosmoDC2 catalog loaded")
+            _logit(log_lock, self.logfile,"cosmoDC2 catalog loaded")
             # get galaxy_id and redshift for crossmatching with SED fit files;
             # we will also get the magnitudes that should be reproduced
             # by our synthetic photometry (hp_query makes sure we only load
@@ -384,7 +410,8 @@ class GalaxyTruthWriter(object):
         if self.nchunk != None:
             max_chunk = min(max_chunk, self.nchunk)
 
-        print("max_chunk is ", max_chunk)
+        _logit(log_lock, self.logfile, 'max_chunk is {}\n'.format(max_chunk))
+
         max_parallel = min(self.parallel, max_chunk)
 
         self_dict['total_gals'] = self.total_gals
@@ -398,12 +425,13 @@ class GalaxyTruthWriter(object):
         arch_scale = 0.12
         if self.knl: arch_scale = KNL_FACTOR * arch_scale
         to = np.ceil(self.chunk_size * arch_scale) + 20
-        print("Start forking at {}. Semaphore timeout value is: {}".format(dt.now(), to))
+        _logit(log_lock, self.logfile,
+               "Start forking at {}. Semaphore timeout value is: {}\n".format(dt.now(), to))
 
         # May eliminate this, allong with --call option
         if self.call:
             for i in range(max_chunk):
-                _process_chunk(db_lock, None, self.sed_fit_name,
+                _process_chunk(db_lock, Log_lock, None, self.sed_fit_name,
                                _global_cosmoDC2_data, starts[i], self_dict,
                                bad_gals)
             return
@@ -412,25 +440,26 @@ class GalaxyTruthWriter(object):
         p_list = []
         for i in range(max_chunk):
             if (not sema.acquire(timeout=to)):
-                print("Unable to obtain process slot before timeout")
+                _logit(log_lock, self.logfile,
+                       "Unable to obtain process slot before timeout")
                 for pp in p_list:
                     if pp.is_alive():
                         pp.terminate()
                     pp.join()
                 exit(1)
             p = Process(target=_process_chunk,name='chunk_{}'.format(i),
-                        args=(db_lock, sema, self.sed_fit_name,
+                        args=(db_lock, log_lock, sema, self.sed_fit_name,
                               cosmoDC2_data,
                               starts[i],self_dict, bad_gals))
             p.start()
             p_list.append(p)
 
-
         # Now wait for the last ones to complete.   Should be able to
         # acquire the original semaphore count
         for i in range(self.parallel):
             if (not sema.acquire(timeout=to)):
-                print("Final batch of processes did not complete in time")
+                _logit(log_lock, self.logfile,
+                       "Final batch of processes did not complete in time")
                 for pp in p_list:
                     if pp.is_alive():
                         pp.terminate()
@@ -445,6 +474,5 @@ class GalaxyTruthWriter(object):
             pass
             #do_indices(self.dbfile)
  
-        sys.stdout.flush()          
-        print('done at time ', dt.now())
+        _logit(log_lock, self.logfile, 'done at time {}\n'.format(dt.now()))
 
