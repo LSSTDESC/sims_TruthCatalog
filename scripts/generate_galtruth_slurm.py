@@ -43,7 +43,7 @@ if __name__ == "__main__":
     pkg_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     print('Package root is ', pkg_root)
 
-    local_out = os.path.join(os.path.join(pkg_root, 'local'),'slurm_logs'))
+    local_out = os.path.join(os.path.join(pkg_root, 'local'),'slurm_logs')
     slurm_out = os.path.join(local_out, '{}_out.txt'.format(args.jobname))
     slurm_err = os.path.join(local_out, '{}_err.txt'.format(args.jobname))
     out_dir = args.out_dir
