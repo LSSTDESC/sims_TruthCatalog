@@ -5,7 +5,7 @@ import os
 import sqlite3
 import numpy as np
 import pandas as pd
-from .galaxy_truth import GalaxyTruthWriter, _write_sqlite as write_sqlite
+from .write_sqlite import write_sqlite
 
 
 __all__ = ['SNeTruthWriter']
@@ -20,7 +20,7 @@ class SNeTruthWriter:
         if os.path.isfile(outfile):
             raise OSError(f'{outfile} already exists.')
         if not os.path.isfile(sne_db_file):
-            raise OSError(f'{sne_db_file} not found.')
+            raise FileNotFoundError(f'{sne_db_file} not found.')
         with sqlite3.connect(sne_db_file) as conn:
             self.sne_df = pd.read_sql('select * from sne_params', conn)
 
@@ -29,13 +29,16 @@ class SNeTruthWriter:
         Extract the column data from the SNe db file and write the
         sqlite file.
         '''
-        flux_by_band = {_: np.zeros(len(self.sne_df)) for _ in 'ugrizy'}
+        zeros = np.zeros(len(self.sne_df))
+        ones = np.ones(len(self.sne_df))
         write_sqlite(self.outfile,
-                     self.sne_df['galaxy_id'],
-                     self.sne_df['snra_in'],
-                     self.sne_df['sndec_in'],
-                     self.sne_df['z_in'],
-                     flux_by_band,
-                     flux_by_band,
-                     range(len(self.sne_df)),
-                     is_variable=1, is_pointsource=1)
+                     ids=self.sne_df['snid_in'],
+                     galaxy_ids=self.sne_df['galaxy_id'],
+                     ra=self.sne_df['snra_in'],
+                     dec=self.sne_df['sndec_in'],
+                     redshift=self.sne_df['z_in'],
+                     is_variable=ones,
+                     is_pointsource=ones,
+                     flux_by_band_MW={_: zeros for _ in 'ugrizy'},
+                     flux_by_band_noMW={_: zeros for _ in 'ugrizy'},
+                     good_ixes=range(len(self.sne_df)))
