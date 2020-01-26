@@ -52,8 +52,7 @@ def _good_indices(galaxies, bad_gs):
     return good_ixes
 
 def _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
-                  flux_by_band_noMW, good_ixes, is_variable=0,
-                  is_pointsource=0):
+                  flux_by_band_noMW, good_ixes):
     with sqlite3.connect(dbfile) as conn:
         conversion_utils.write_column_descriptions(conn)
         cursor = conn.cursor()
@@ -70,7 +69,7 @@ def _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
         #print("Created table if not exists truth_summary")
         values = ((int(galaxy_ids[i_obj]),int(-1),
                    ra[i_obj],dec[i_obj],
-                   redshift[i_obj], is_variable, is_pointsource,
+                   redshift[i_obj], 0, 0,
                    flux_by_band_MW['u'][i_obj], flux_by_band_MW['g'][i_obj],
                    flux_by_band_MW['r'][i_obj], flux_by_band_MW['i'][i_obj],
                    flux_by_band_MW['z'][i_obj], flux_by_band_MW['y'][i_obj],
