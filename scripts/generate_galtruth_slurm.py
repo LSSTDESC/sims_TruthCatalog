@@ -47,8 +47,12 @@ if __name__ == "__main__":
     slurm_out = os.path.join(local_out, '{}_out.txt'.format(args.jobname))
     slurm_err = os.path.join(local_out, '{}_err.txt'.format(args.jobname))
     out_dir = args.out_dir
-    per_node_script = os.path.join(os.path.join(pkg_root, 'scripts'),
-                                   'runshift_galtruth.sh')
+    if (args.debug):
+        per_node_script = os.path.join(os.path.join(pkg_root, 'scripts'),
+                                       'runshift_galtruth_dbg.sh')
+    else:
+        per_node_script = os.path.join(os.path.join(pkg_root, 'scripts'),
+                                       'runshift_galtruth.sh')
     out_script_dir = os.path.dirname(args.out_script)
     os.makedirs(out_script_dir, exist_ok=True)
 
