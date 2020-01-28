@@ -12,8 +12,7 @@ import GCRCatalogs
 
 import lsst.sims.photUtils as sims_photUtils
 from lsst.sims.catUtils.dust import EBVbase
-
-import desc.sims_truthcatalog.conversion_utils as conversion_utils
+from . import sqlite_utils
 
 MAX_PARALLEL= 10    # to be tuned..  May depend on chunk size
 KNL_FACTOR = 8      # KNL is about 8 times slower than Cori. Adjust 
@@ -53,8 +52,9 @@ def _good_indices(galaxies, bad_gs):
 
 def _write_sqlite(dbfile, galaxy_ids, ra, dec, redshift, flux_by_band_MW,
                   flux_by_band_noMW, good_ixes):
+
     with sqlite3.connect(dbfile) as conn:
-        conversion_utils.write_column_descriptions(conn)
+        sqlite_utils.write_column_descriptions(conn)
         cursor = conn.cursor()
 
         cmd = '''CREATE TABLE IF NOT EXISTS truth_summary

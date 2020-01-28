@@ -2,7 +2,7 @@
 Function to write truth_summary table
 """
 import sqlite3
-from . import conversion_utils
+from . import sqlite_utils
 
 
 __all__ = ['write_sqlite']
@@ -14,7 +14,7 @@ def write_sqlite(dbfile, ids, galaxy_ids, ra, dec, redshift, is_variable,
     Write the truth_summary table.
     """
     with sqlite3.connect(dbfile) as conn:
-        conversion_utils.write_column_descriptions(conn)
+        sqlite_utils.write_column_descriptions(conn)
         cursor = conn.cursor()
 
         cmd = '''CREATE TABLE IF NOT EXISTS truth_summary
