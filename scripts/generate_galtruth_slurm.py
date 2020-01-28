@@ -32,11 +32,15 @@ if __name__ == "__main__":
                        
     args = parser.parse_args()
 
+    # by default use very small chunk size for debug
+    if (args.debug) and (args.chunk_size == 100000):
+        args.chunk_size = 1000
+
     print('generate_galtruth_slurm will use arguments ')
     print('out_script={}'.format(args.out_script))
     print('out_dir={}'.format(args.out_dir))
     print('jobname={}'.format(args.jobname))
-    print('healpixl_file={}'.format(args.healpixel_file))
+    print('healpixel_file={}'.format(args.healpixel_file))
     print('chunk_size={}'.format(args.chunk_size))
     print('max_parallel={}'.format(args.max_parallel))
 
@@ -89,14 +93,13 @@ if __name__ == "__main__":
         out_file.write('#SBATCH -N {}\n'.format(n_hp))
         if (args.debug):
             out_file.write('#SBATCH -t 0:30:00\n'.format(n_hrs))
-        else:
-            out_file.write('#SBATCH -t {}:00:00\n'.format(n_hrs))
-        out_file.write('#SBATCH -o {}\n'.format(slurm_out))
-        out_file.write('#SBATCH -e {}\n'.format(slurm_err))
-        if (args.debug):
             out_file.write('#SBATCH -q debug\n')
         else:
+            out_file.write('#SBATCH -t {}:00:00\n'.format(n_hrs))
             out_file.write('#SBATCH -q regular\n')
+        out_file.write('#SBATCH -o {}\n'.format(slurm_out))
+        out_file.write('#SBATCH -e {}\n'.format(slurm_err))
+
         out_file.write('#SBATCH -A m1727\n')
         out_file.write('#SBATCH --tasks-per-node=1\n')
         out_file.write('#SBATCH --cpus-per-task=64\n')
