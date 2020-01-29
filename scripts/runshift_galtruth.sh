@@ -21,9 +21,7 @@ setup -j -r ${sims_TruthCatalog_root}
 
 ## setup -j -r -t DC2production throughputs   #already in the image
 
-python -W'ignore' \      # ignore all warnings
-$SIMS_TRUTHCATALOG_DIR/bin.src/write_gal_truth.py \
-${out_dir} \
+python   $SIMS_TRUTHCATALOG_DIR/bin.src/write_gal_truth.py ${out_dir} \
 --healpixel ${hp_id} \
 --max-parallel ${max_parallel} \
 --chunk-size ${chunk_size} \
