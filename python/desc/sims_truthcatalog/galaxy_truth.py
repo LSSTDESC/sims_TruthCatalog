@@ -249,9 +249,10 @@ def _process_chunk(db_lock, log_lock, sema, sed_fit_name, cosmoDC2_data,
                     fluxes[component][i_gal] = f_MW
                 if (component == 'disk') and (bp == 'r'):
                     redshift = z_arr
-
-            total_fluxes = fluxes_noMW['disk'] + fluxes_noMW['bulge']
-            total_fluxes_MW = fluxes['disk'] + fluxes['bulge']
+                    
+            # Sum components and convert to nanojansky
+            total_fluxes = (fluxes_noMW['disk'] + fluxes_noMW['bulge']) * 10**9
+            total_fluxes_MW = (fluxes['disk'] + fluxes['bulge']) * 10**9
 
             dummy_sed = sims_photUtils.Sed()
 
