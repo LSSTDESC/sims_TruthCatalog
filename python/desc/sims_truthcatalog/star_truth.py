@@ -5,24 +5,11 @@ import os
 import sqlite3
 import numpy as np
 import pandas as pd
-from lsst.sims.utils import defaultSpecMap
 from .write_sqlite import write_sqlite
-from .synthetic_photometry import SyntheticPhotometry
+from .synthetic_photometry import SyntheticPhotometry, find_sed_file
 
 
 __all__ = ['StarTruthWriter']
-
-
-def find_sed_file(sed_file):
-    """
-    Return the full path to the SED file assuming it is in the
-    lsst_sims SED library.
-    """
-    full_path = os.path.join(os.environ['SIMS_SED_LIBRARY_DIR'],
-                             defaultSpecMap[sed_file])
-    if not os.path.isfile(full_path):
-        raise FileNotFoundError(full_path)
-    return full_path
 
 
 class StarTruthWriter:
@@ -61,16 +48,15 @@ class StarTruthWriter:
                       f'decl <= {radec_bounds[3]}')
         if row_limit is not None:
             query += f' limit {row_limit}'
-        print(query)
         self.curs = self.conn.execute(query)
         self.icol = {_[0]: icol for icol, _ in enumerate(self.curs.description)}
 
-    def write(self, chunk_size=1000):
+    def write(self, chunk_size=1000, verbose=False):
         '''
         Extract the column data from the star db file and write the
         sqlite file.
         '''
-        irow = 0
+        irec = 0
         while True:
             ids, galaxy_ids, ra, dec, redshift = [], [], [], [], []
             is_variable, is_pointsource, good_ixes = [], [], []
@@ -81,8 +67,9 @@ class StarTruthWriter:
                 # No more rows to retrieve so exit the while loop.
                 break
             for row in chunk:
-                print(irow)
-                irow += 1
+                if verbose:
+                    print(irec)
+                irec += 1
                 redshift.append(0)
                 # All stars are point sources.
                 is_pointsource.append(1)

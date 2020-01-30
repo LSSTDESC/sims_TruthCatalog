@@ -2,12 +2,26 @@
 Interface to lsst.sims.photUtils code to perform synthetic photometry,
 i.e., calculate object fluxes in LSST standard bandpasses.
 """
+import os
 import copy
 import numpy as np
 import lsst.sims.photUtils as sims_photUtils
+from lsst.sims.utils import defaultSpecMap
 
 
-__all__ = ['SyntheticPhotometry']
+__all__ = ['SyntheticPhotometry', 'find_sed_file']
+
+
+def find_sed_file(sed_file):
+    """
+    Return the full path to the SED file assuming it is in the
+    lsst_sims SED library.
+    """
+    full_path = os.path.join(os.environ['SIMS_SED_LIBRARY_DIR'],
+                             defaultSpecMap[sed_file])
+    if not os.path.isfile(full_path):
+        raise FileNotFoundError(full_path)
+    return full_path
 
 
 class CCMmodel:
