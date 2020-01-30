@@ -51,10 +51,18 @@ class StarTruthWriter:
         self.curs = self.conn.execute(query)
         self.icol = {_[0]: icol for icol, _ in enumerate(self.curs.description)}
 
-    def write(self, chunk_size=1000, verbose=False):
+    def write(self, chunk_size=10000, verbose=False):
         '''
         Extract the column data from the star db file and write the
         sqlite file.
+
+        Parameters
+        ----------
+        chunk_size: int [10000]
+            Number of records to read in at a time from the star db
+            file and write to the output file.
+        verbose: bool [False]
+            Flag to write the number of records that have been processed.
         '''
         irec = 0
         while True:
@@ -70,17 +78,16 @@ class StarTruthWriter:
                 if verbose:
                     print(irec)
                 irec += 1
-                redshift.append(0)
-                # All stars are point sources.
-                is_pointsource.append(1)
+                redshift.append(0)  # All stars are at redshift = 0.
+                is_pointsource.append(1)  # All stars are point sources.
                 ids.append(str(row[self.icol['simobjid']]))
                 galaxy_ids.append(-1)
                 ra.append(row[self.icol['ra']])
                 dec.append(row[self.icol['decl']])
-                # There no obvious indication in the stellar db file
-                # whether an object is variable or not, so set to 1
-                # as a hedge.
-                is_variable.append(1)
+                if row[self.icol['varParamStr']] == 'None':
+                    is_variable.append(0)
+                else:
+                    is_variable.append(1)
                 sed_file = find_sed_file(row[self.icol['sedFilename']])
 
                 # Create SyntheticPhotometry object initially without
