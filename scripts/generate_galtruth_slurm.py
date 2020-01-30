@@ -65,6 +65,10 @@ if __name__ == "__main__":
     hp = []
     with open(hp_path, 'r') as hp_file:
         for line in hp_file:
+            if len(line.lstrip()) == 0:
+                continue
+            if line[0] == '#':
+                continue
             hp.append(int(line))
 
     n_hp = len(hp)
