@@ -89,6 +89,14 @@ class SNeTruthWriter:
     Write Summary and Variable truth tables for SNe.
     '''
     def __init__(self, outfile, sne_db_file):
+        """
+        Parameters
+        ----------
+        outfile: str
+            Name of the sqlite3 file to contain the truth tables.
+        sne_db_file: str
+            The sqlite3 file containing the SNe model parameters.
+        """
         self.outfile = outfile
         if os.path.isfile(outfile):
             raise OSError(f'{outfile} already exists.')
@@ -143,7 +151,28 @@ class SNeTruthWriter:
                                    VALUES (?,?,?,?,?,?,?,?,?)''', values)
             conn.commit()
 
-    def write_variability_truth(self, opsim_db_file, fp_radius=2.1):
+    def write_variability_truth(self, opsim_db_file, fp_radius=2.1,
+                                max_rows=None):
+        """
+        Write the Variability Truth Table. This will contain light curve
+        points for visits in which the SN was being observed by LSST.
+
+        Parameters
+        ----------
+        opsim_db_file: str
+            The sqlite3 file containing the OpSim Summary table which
+            has the pointing information for each visit.
+        fp_radius: float [2.1]
+            Effective radius of the focal plane in degrees.  This defines
+            the acceptance cone centered on the pointing direction for
+            determining if an object is being observed by LSST for the
+            purpose of computing a flux entry for the visit to be entered
+            in the Variability Truth Table.
+        max_rows: int [None]
+            Threshold number of rows to write to the table.  This is useful
+            for testing.  If None, then write all entries for all SNe in
+            the sne_db_file.
+        """
         # Read in pointing and filter info from the OpSim db file.
         with sqlite3.connect(opsim_db_file) as conn:
             opsim_df = pd.read_sql(
@@ -162,20 +191,29 @@ class SNeTruthWriter:
             cursor.execute(cmd)
             conn.commit()
 
-            # Loop over rows in the SN database and add fluxes for
+            # Loop over rows in the SN database and add the flux for
             # each observation where the SN is observed by LSST.
+            num_rows = 0
             for iloc in range(len(self.sne_df)):
                 row = self.sne_df.iloc[iloc]
                 sp_factory = SNSynthPhotFactory(**row)
+
+                # Make cuts on time based on sncosmo valid model range
+                # and on allowed range of Declination values.
                 tmin, tmax = sp_factory.mintime(), sp_factory.maxtime()
                 dmin, dmax = row.sndec_in - fp_radius, row.sndec_in + fp_radius
                 df = pd.DataFrame(
                     opsim_df.query(f'{tmin} <= expMJD <= {tmax} and '
                                    f'{dmin} <= dec <= {dmax}'))
+
+                # Compute angular separation from SN position to use
+                # for applying acceptance cone cut.
                 df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
                                                   df['dec'].to_numpy(),
                                                   row.snra_in, row.sndec_in)
                 df = df.query(f'ang_sep <= {fp_radius}')
+
+                # Insert the rows into the variability truth table.
                 values = []
                 for visit, band, mjd in zip(df['obsHistID'], df['filter'],
                                             df['expMJD']):
@@ -185,3 +223,6 @@ class SNeTruthWriter:
                 cursor.executemany(f'''INSERT INTO {table_name}
                                        VALUES (?,?,?,?,?)''', values)
                 conn.commit()
+                num_rows += len(values)
+                if max_rows is not None and num_rows > max_rows:
+                    break
