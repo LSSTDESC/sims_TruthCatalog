@@ -73,13 +73,18 @@ class SNSynthPhotFactory:
         -------
         desc.sims_truthcatalog.SyntheticPhotometry
         """
+        # Create the Sed object.  Milky Way extinction will be
+        # below, so set applyExtinction=False.
         sed = self.sn_obj.SNObjectSED(mjd, bandpass=self.bp_dict,
                                       applyExtinction=False)
+        # The redshift was applied to the model SED computed by
+        # sncosmo in the __init__ function, so set redshift=0 here.
         synth_phot = SyntheticPhotometry.create_from_sed(sed, redshift=0)
         synth_phot.add_MW_dust(*np.degrees(self.sn_obj.skycoord).flatten())
         return synth_phot
 
     def __getattr__(self, attr):
+        # Pass any attribute access requests to the SNObject instance.
         return getattr(self.sn_obj, attr)
 
 
