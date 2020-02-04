@@ -5,10 +5,59 @@ import os
 import sqlite3
 import numpy as np
 import pandas as pd
+from lsst.sims.catUtils.supernovae import SNObject
+from lsst.sims.photUtils import BandpassDict
+from lsst.sims.utils import angularSeparation
+from .synthetic_photometry import SyntheticPhotometry
 from .write_sqlite import write_sqlite
 
 
 __all__ = ['SNeTruthWriter']
+
+
+class SNSynthPhotFactory:
+    """
+    Factory class to return the SyntheticPhotometry objects for a SN Ia
+    as a function of time.
+    """
+    lsst_bp_dict = BandpassDict.loadTotalBandpassesFromFiles()
+    def __init__(self, row, bp_dict=None):
+        """
+        Parameters
+        ----------
+        row: pandas.Series
+             Row of a pandas DataFrame that contains the sne_params db table.
+        bp_dict: lsst.sims.photUtils.BandpassDict
+             Dictionary containing the bandpasses. If None, the standard
+             LSST total bandpasses will be used.
+        """
+        self.sn_obj = SNObject(row.snra_in, row.sndec_in)
+        self.sn_obj.set(z=row.z_in, t0=row.t0_in, x0=row.x0_in,
+                        x1=row.x1_in, c=row.c_in, hostebv=0, hostr_v=3.1,
+                        mwebv=0, mwr_v=3.1)
+        self.bp_dict = self.lsst_bp_dict if bp_dict is None else bp_dict
+
+    def create(self, mjd):
+        """
+        Return a SyntheticPhotometry object for the specified time in MJD.
+
+        Parameters
+        ----------
+        mjd: float
+            Observation time in MJD.
+
+        Returns
+        -------
+        desc.sims_truthcatalog.SyntheticPhotometry
+        """
+        sed = self.sn_obj.SNObjectSED(mjd, bandpass=self.bp_dict,
+                                      applyExtinction=False)
+        synth_phot = SyntheticPhotometry.create_from_sed(sed, redshift=0)
+        synth_phot.add_MW_dust(*np.degrees(self.sn_obj.skycoord).flatten())
+        return synth_phot
+
+    def __getattr__(self, attr):
+        return getattr(self.sn_obj, attr)
 
 
 class SNeTruthWriter:
@@ -69,3 +118,46 @@ class SNeTruthWriter:
             cursor.executemany(f'''INSERT INTO {table_name}
                                    VALUES (?,?,?,?,?,?,?,?,?)''', values)
             conn.commit()
+
+    def write_variability_truth(self, opsim_db_file, fp_radius=2.1):
+        # Read in pointing and filter info from the OpSim db file.
+        with sqlite3.connect(opsim_db_file) as conn:
+            opsim_df = pd.read_sql(
+                '''select obsHistID, descDitheredRA, descDitheredDec, filter,
+                   expMJD from Summary''', conn)
+        opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
+        opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
+
+        # Create the Variability Truth table.
+        table_name = 'sn_variability_truth'
+        cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
+                  (id TEXT, obsHistID INT, MJD FLOAT, bandpass TEXT,
+                  delta_flux FLOAT)'''
+        with sqlite3.connect(self.outfile) as conn:
+            cursor = conn.cursor()
+            cursor.execute(cmd)
+            conn.commit()
+
+            # Loop over rows in the SN database and add fluxes for
+            # each observation where the SN is observed by LSST.
+            for iloc in range(len(self.sne_df)):
+                row = self.sne_df.iloc[iloc]
+                sp_factory = SNSynthPhotFactory(row)
+                tmin, tmax = sp_factory.mintime(), sp_factory.maxtime()
+                dmin, dmax = row.sndec_in - fp_radius, row.sndec_in + fp_radius
+                df = pd.DataFrame(
+                    opsim_df.query(f'{tmin} <= expMJD <= {tmax} and '
+                                   f'{dmin} <= dec <= {dmax}'))
+                df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
+                                                  df['dec'].to_numpy(),
+                                                  row.snra_in, row.sndec_in)
+                df = df.query(f'ang_sep <= {fp_radius}')
+                values = []
+                for visit, band, mjd in zip(df['obsHistID'], df['filter'],
+                                            df['expMJD']):
+                    synth_phot = sp_factory.create(mjd)
+                    values.append((row.snid_in, visit, mjd, band,
+                                   synth_phot.calcFlux(band)))
+                cursor.executemany(f'''INSERT INTO {table_name}
+                                       VALUES (?,?,?,?,?)''', values)
+                conn.commit()

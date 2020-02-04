@@ -5,6 +5,7 @@ i.e., calculate object fluxes in LSST standard bandpasses.
 import os
 import copy
 import numpy as np
+from lsst.sims.catUtils.dust import EBVbase
 import lsst.sims.photUtils as sims_photUtils
 from lsst.sims.utils import defaultSpecMap
 
@@ -67,18 +68,19 @@ class SyntheticPhotometry:
     # SyntheticPhotometry instances to take advantage of the caching of
     # the a(x) and b(x) arrays used by the dust models.
     dust_models = dict(ccm=CCMmodel())
-    def __init__(self, sed_file, mag_norm, redshift, iAv=0, iRv=3.1,
+    def __init__(self, sed_file, mag_norm, redshift=0, iAv=0, iRv=3.1,
                  gAv=0, gRv=3.1, dust_model_name='ccm', bp_dict=None):
         """
         Parameters
         ----------
         sed_file: str
             File containing the unnormalized SED as columns of wavelength
-            in nm and flux-density as flambda.
+            in nm and flux-density as flambda.  If None, then don't create
+            an Sed object.
         mag_norm: float
             Monochromatic magnitude of the object at 500nm.  This provides
             the normalization of the SED.
-        redshift: float
+        redshift: float [0]
             The redshift of the object.
         iAv: float [0]
             Reference extinction parameter for internal reddening.
@@ -110,14 +112,36 @@ class SyntheticPhotometry:
         if bp_dict is None:
             self.bp_dict \
                 = sims_photUtils.BandpassDict.loadTotalBandpassesFromFiles()
-        self._create_sed()
+        if sed_file is not None:
+            self._create_sed()
+        self.ebv_model = EBVbase()
 
-    def add_MW_dust(self, gAv, gRv):
+    @staticmethod
+    def create_from_sed(sed, redshift):
+        synth_phot = SyntheticPhotometry(None, None)
+        synth_phot.sed = sed
+        if redshift != 0:
+            synth_phot.sed.redshiftSED(redshift, dimming=True)
+            synth_phot.sed.resampleSED(wavelen_match
+                                       =synth_phot.bp_dict.wavelenMatch)
+        return synth_phot
+
+    def add_MW_dust(self, ra, dec, Rv=3.1):
+        eq_coord = np.array([[np.radians(ra)], [np.radians(dec)]])
+        ebv = self.ebv_model.calculateEbv(equatorialCoordinates=eq_coord,
+                                          interp=True)
+        Av = Rv*ebv
+        self.add_dust(Av, Rv, 'Galactic')
+        return Av, Rv
+
+    def add_dust(self, Av, Rv, component):
         """
-        Apply Milky Way dust to the SED.
+        Apply dust to the SED for the specified component.
         """
-        self.dust_models[self.dust_model_name].add_dust(self.sed, gAv, gRv,
-                                                        'Galactic')
+        if component not in ('intrinsic', 'Galactic'):
+            raise RuntimeError(f'Unrecognized dust component: {component}')
+        self.dust_models[self.dust_model_name].add_dust(self.sed, Av, Rv,
+                                                        component)
 
     def _create_sed(self):
         """
@@ -127,14 +151,14 @@ class SyntheticPhotometry:
         self.sed.readSED_flambda(self.sed_file)
         fnorm = sims_photUtils.getImsimFluxNorm(self.sed, self.mag_norm)
         self.sed.multiplyFluxNorm(fnorm)
-        my_dust_model = self.dust_models[self.dust_model_name]
+
         if self.iAv != 0:
-            my_dust_model.add_dust(self.sed, self.iAv, self.iRv, 'intrinsic')
+            self.add_dust(self.sed, self.iAv, self.iRv, 'intrinsic')
         if self.redshift != 0:
             self.sed.redshiftSED(self.redshift, dimming=True)
         self.sed.resampleSED(wavelen_match=self.bp_dict.wavelenMatch)
         if self.gAv != 0:
-            self.add_MW_dust(self.gAv, self.gRv)
+            self.add_dust(self.gAv, self.gRv, 'Galactic')
 
     def calcFlux(self, band):
         """
