@@ -22,30 +22,29 @@ class SNSynthPhotFactory:
     sncosmo as implemented in sims_catUtils.
     """
     lsst_bp_dict = BandpassDict.loadTotalBandpassesFromFiles()
-    def __init__(self, z_in=0, t0_in=0, x0_in=1, x1_in=0, c_in=0,
-                 snra_in=0, sndec_in=0):
+    def __init__(self, z=0, t0=0, x0=1, x1=0, c=0, snra=0, sndec=0):
         """
         Parameters
         ----------
-        z_in: float [0]
+        z: float [0]
              Redshift of the SNIa object to pass to sncosmo.
-        t0_in: float [0]
+        t0: float [0]
              Time in mjd of phase=0, corresponding to the B-band
              maximum.
-        x0_in: float [1]
+        x0: float [1]
              Normalization factor for the lightcurves.
-        x1_in: float [0]
+        x1: float [0]
              Empirical parameter controlling the stretch in time of the
              light curves
-        c_in: float [0]
+        c: float [0]
              Empirical parameter controlling the colors.
-        snra_in: float [0]
-             RA in ICRS degrees of the SNIa.
-        sndec_in: float [0]
-             Dec in ICRS degrees of the SNIa.
+        snra: float [0]
+             RA in degrees of the SNIa.
+        sndec: float [0]
+             Dec in degrees of the SNIa.
         """
-        self.sn_obj = SNObject(snra_in, sndec_in)
-        self.sn_obj.set(z=z_in, t0=t0_in, x0=x0_in, x1=x1_in, c=c_in,
+        self.sn_obj = SNObject(snra, sndec)
+        self.sn_obj.set(z=z, t0=t0, x0=x0, x1=x1, c=c,
                         hostebv=0, hostr_v=3.1, mwebv=0, mwr_v=3.1)
         self.bp_dict = self.lsst_bp_dict
 
@@ -196,7 +195,9 @@ class SNeTruthWriter:
             num_rows = 0
             for iloc in range(len(self.sne_df)):
                 row = self.sne_df.iloc[iloc]
-                sp_factory = SNSynthPhotFactory(**row)
+                params = {_: row[f'{_}_in'] for _ in
+                          'z t0 x0 x1 c snra sndec'.split()}
+                sp_factory = SNSynthPhotFactory(**params)
 
                 # Make cuts on time based on sncosmo valid model range
                 # and on allowed range of Declination values.
