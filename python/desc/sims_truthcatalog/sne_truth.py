@@ -12,30 +12,54 @@ from .synthetic_photometry import SyntheticPhotometry
 from .write_sqlite import write_sqlite
 
 
-__all__ = ['SNeTruthWriter']
+__all__ = ['SNeTruthWriter', 'SNSynthPhotFactory']
 
 
 class SNSynthPhotFactory:
     """
     Factory class to return the SyntheticPhotometry objects for a SN Ia
-    as a function of time.
+    as a function of time.  This uses the 'salt2-extended' model in
+    sncosmo as implemented in sims_catUtils.
     """
     lsst_bp_dict = BandpassDict.loadTotalBandpassesFromFiles()
-    def __init__(self, row, bp_dict=None):
+    def __init__(self, z_in=0, t0_in=0, x0_in=1, x1_in=0, c_in=0,
+                 snra_in=0, sndec_in=0):
         """
         Parameters
         ----------
-        row: pandas.Series
-             Row of a pandas DataFrame that contains the sne_params db table.
+        z_in: float [0]
+             Redshift of the SNIa object to pass to sncosmo.
+        t0_in: float [0]
+             Time in mjd of phase=0, corresponding to the B-band
+             maximum.
+        x0_in: float [1]
+             Normalization factor for the lightcurves.
+        x1_in: float [0]
+             Empirical parameter controlling the stretch in time of the
+             light curves
+        c_in: float [0]
+             Empirical parameter controlling the colors.
+        snra_in: float [0]
+             RA in ICRS degrees of the SNIa.
+        sndec_in: float [0]
+             Dec in ICRS degrees of the SNIa.
+        """
+        self.sn_obj = SNObject(snra_in, sndec_in)
+        self.sn_obj.set(z=z_in, t0=t0_in, x0=x0_in, x1=x1_in, c=c_in,
+                        hostebv=0, hostr_v=3.1, mwebv=0, mwr_v=3.1)
+        self.bp_dict = self.lsst_bp_dict
+
+    def set_bp_dict(self, bp_dict):
+        """
+        Set the bandpass dictionary.
+
+        Parameters
+        ----------
         bp_dict: lsst.sims.photUtils.BandpassDict
              Dictionary containing the bandpasses. If None, the standard
              LSST total bandpasses will be used.
         """
-        self.sn_obj = SNObject(row.snra_in, row.sndec_in)
-        self.sn_obj.set(z=row.z_in, t0=row.t0_in, x0=row.x0_in,
-                        x1=row.x1_in, c=row.c_in, hostebv=0, hostr_v=3.1,
-                        mwebv=0, mwr_v=3.1)
-        self.bp_dict = self.lsst_bp_dict if bp_dict is None else bp_dict
+        self.bp_dict = bp_dict
 
     def create(self, mjd):
         """
@@ -142,7 +166,7 @@ class SNeTruthWriter:
             # each observation where the SN is observed by LSST.
             for iloc in range(len(self.sne_df)):
                 row = self.sne_df.iloc[iloc]
-                sp_factory = SNSynthPhotFactory(row)
+                sp_factory = SNSynthPhotFactory(**row)
                 tmin, tmax = sp_factory.mintime(), sp_factory.maxtime()
                 dmin, dmax = row.sndec_in - fp_radius, row.sndec_in + fp_radius
                 df = pd.DataFrame(
