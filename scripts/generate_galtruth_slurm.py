@@ -11,7 +11,7 @@ if __name__ == "__main__":
     one healpixel
     '''
 
-    our_image='docker:lsstdesc/stack-sims:w_2019_42-sims_w_2019_42-v2\n'
+    our_image='docker:lsstdesc/stack-sims-cat:w_2019_42-sims_w_2019_42\n'
     parser = argparse.ArgumentParser()
     parser.add_argument('--out_script', type=str,
                         default='local/slurm_scripts/batch_gal_truth.sl')
