@@ -1,3 +1,6 @@
+"""
+Unit tests for SNIa truth catalog code.
+"""
 import os
 import unittest
 import sqlite3
