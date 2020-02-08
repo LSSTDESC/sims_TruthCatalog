@@ -155,7 +155,7 @@ class SNeTruthWriter:
                                    VALUES (?,?,?,?,?,?,?,?,?)''', values)
             conn.commit()
 
-    def write_variability_truth(self, opsim_db_file, fp_radius=2.1,
+    def write_variability_truth(self, opsim_db_file, fp_radius=2.05,
                                 max_rows=None):
         """
         Write the Variability Truth Table. This will contain light curve
@@ -166,7 +166,7 @@ class SNeTruthWriter:
         opsim_db_file: str
             The sqlite3 file containing the OpSim Summary table which
             has the pointing information for each visit.
-        fp_radius: float [2.1]
+        fp_radius: float [2.05]
             Effective radius of the focal plane in degrees.  This defines
             the acceptance cone centered on the pointing direction for
             determining if an object is being observed by LSST for the
