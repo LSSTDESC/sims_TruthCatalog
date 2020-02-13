@@ -40,7 +40,8 @@ class StarTruthWriter:
         if not os.path.isfile(star_db_file):
             raise FileNotFoundError(f'{star_db_file} not found.')
         self.conn = sqlite3.connect(star_db_file)
-        query = 'select * from stars'
+        query = '''select simobjid, ra, decl, varParamStr, sedFilename,
+                magNorm, ebv from stars'''
         if radec_bounds is not None:
             query += (f' where {radec_bounds[0]} <= ra and ' +
                       f'ra <= {radec_bounds[1]} and ' +
