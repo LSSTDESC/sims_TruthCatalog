@@ -41,7 +41,7 @@ class StarTruthWriter:
             raise FileNotFoundError(f'{star_db_file} not found.')
         self.conn = sqlite3.connect(star_db_file)
         query = '''select simobjid, ra, decl, varParamStr, sedFilename,
-                magNorm, ebv from stars'''
+                magNorm from stars'''
         if radec_bounds is not None:
             query += (f' where {radec_bounds[0]} <= ra and ' +
                       f'ra <= {radec_bounds[1]} and ' +
@@ -100,9 +100,7 @@ class StarTruthWriter:
                     flux_by_band_noMW[band].append(synth_phot.calcFlux(band))
 
                 # Set Milky Way dust parameters and compute ugrizy fluxes.
-                gRv = 3.1
-                gAv = gRv*row[self.icol['ebv']]
-                synth_phot.add_MW_dust(gAv, gRv)
+                synth_phot.add_MW_dust(ra[-1], dec[-1], Rv=3.1)
                 for band in 'ugrizy':
                     flux_by_band_MW[band].append(synth_phot.calcFlux(band))
             write_sqlite(self.outfile,
