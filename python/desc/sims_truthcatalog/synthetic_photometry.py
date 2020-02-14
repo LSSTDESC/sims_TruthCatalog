@@ -18,8 +18,11 @@ def find_sed_file(sed_file):
     Return the full path to the SED file assuming it is in the
     lsst_sims SED library.
     """
-    full_path = os.path.join(os.environ['SIMS_SED_LIBRARY_DIR'],
-                             defaultSpecMap[sed_file])
+    try:
+        spec_file = defaultSpecMap[sed_file]
+    except KeyError:
+        spec_file = sed_file
+    full_path = os.path.join(os.environ['SIMS_SED_LIBRARY_DIR'], spec_file)
     if not os.path.isfile(full_path):
         raise FileNotFoundError(full_path)
     return full_path
@@ -68,6 +71,8 @@ class SyntheticPhotometry:
     # SyntheticPhotometry instances to take advantage of the caching of
     # the a(x) and b(x) arrays used by the dust models.
     dust_models = dict(ccm=CCMmodel())
+    bp_dicts \
+        = dict(lsst=sims_photUtils.BandpassDict.loadTotalBandpassesFromFiles())
     def __init__(self, sed_file, mag_norm, redshift=0, iAv=0, iRv=3.1,
                  gAv=0, gRv=3.1, dust_model_name='ccm', bp_dict=None):
         """
@@ -110,8 +115,7 @@ class SyntheticPhotometry:
         self.gRv = gRv
         self.dust_model_name = dust_model_name
         if bp_dict is None:
-            self.bp_dict \
-                = sims_photUtils.BandpassDict.loadTotalBandpassesFromFiles()
+            self.bp_dict = self.bp_dicts['lsst']
         if sed_file is not None:
             self._create_sed()
         self.ebv_model = EBVbase()
