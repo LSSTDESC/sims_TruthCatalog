@@ -23,7 +23,7 @@ class AGNTruthWriterTestCase(unittest.TestCase):
 
     def test_write(self):
         '''
-        Test the AGNTruthWriter class.
+        Test the AGNTruthWriter.write method.
         '''
         # Check exceptions in __init__.
         with self.assertRaises(FileNotFoundError):
@@ -41,6 +41,30 @@ class AGNTruthWriterTestCase(unittest.TestCase):
         row = df.iloc[0]
         self.assertEqual(row['host_galaxy'], 1250442285)
         self.assertAlmostEqual(row['redshift'], 0.517463326454163)
+
+    def test_write_auxiliary(self):
+        '''
+        Test the AGNTruthWriter.write_auxiliary_truth method.
+        '''
+        agn_truth_writer = AGNTruthWriter(self.outfile, self.agn_db_file)
+        agn_truth_writer.write_auxiliary_truth()
+        with sqlite3.connect(self.outfile) as conn:
+            df = pd.read_sql('select * from agn_auxiliary_info', conn)
+
+        row = df.iloc[0]
+        galaxy_id = 1250442285
+        self.assertEqual(row['id'], str(1024*galaxy_id + 117))
+        self.assertEqual(row['host_galaxy'], galaxy_id)
+        self.assertAlmostEqual(row['M_i'], -25.2830250010622)
+        self.assertEqual(row['seed'], 2463655)
+
+        row = df.iloc[len(df) - 1]
+        galaxy_id = 1253710043
+        self.assertEqual(row['id'], str(1024*galaxy_id + 117))
+        self.assertEqual(row['host_galaxy'], galaxy_id)
+        self.assertAlmostEqual(row['M_i'], -22.5594939688854)
+        self.assertEqual(row['seed'], 7649944)
+
 
 if __name__ == '__main__':
     unittest.main()

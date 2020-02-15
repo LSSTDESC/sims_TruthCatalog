@@ -4,6 +4,7 @@ Module to write truth catalogs for AGNs using the AGNs parameters db as input.
 import os
 import math
 from collections import defaultdict
+import json
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -19,7 +20,8 @@ def agn_mag_norms(mjds, redshift, tau, sf, seed, start_date=58580.,
                   dt_frac=1e-2):
     """
     Return the delta mag_norm values wrt the infinite-time average
-    mag_norm for the provided AGN light curve parameters.
+    mag_norm for the provided AGN light curve parameters.  mag_norm is
+    the object's un-reddened monochromatic magnitude at 500nm.
 
     Parameters
     ----------
@@ -100,10 +102,10 @@ class AGNTruthWriter:
         if not os.path.isfile(agn_db_file):
             raise FileNotFoundError(f'{agn_db_file} not found.')
         self.conn = sqlite3.connect(agn_db_file)
-        query = '''select galaxy_id, magNorm, redshift, ra, dec,
-                varParamStr from agn_params'''
-        self.curs = self.conn.execute(query)
-        self.icol = {_[0]: icol for icol, _ in enumerate(self.curs.description)}
+        self.query = '''select galaxy_id, magNorm, redshift, M_i, ra, dec,
+                     varParamStr from agn_params'''
+        curs = self.conn.execute(self.query)
+        self.icol = {_[0]: icol for icol, _ in enumerate(curs.description)}
 
     def write(self, chunk_size=10000, verbose=False):
         '''
@@ -119,13 +121,14 @@ class AGNTruthWriter:
             Flag to write the number of records that have been processed.
         '''
         bands = 'ugrizy'
+        curs = self.conn.execute(self.query)
         irec = 0
         while True:
             ids, galaxy_ids, ra, dec, redshift = [], [], [], [], []
             is_variable, is_pointsource, good_ixes = [], [], []
             flux_by_band_MW = {_: [] for _ in bands}
             flux_by_band_noMW = {_: [] for _ in bands}
-            chunk = self.curs.fetchmany(chunk_size)
+            chunk = curs.fetchmany(chunk_size)
             if not chunk:
                 break
             for row in chunk:
@@ -168,20 +171,56 @@ class AGNTruthWriter:
                          flux_by_band_noMW=flux_by_band_noMW,
                          good_ixes=range(len(ids)))
 
-    def write_auxiliary_truth(self):
+    def write_auxiliary_truth(self, chunk_size=10000, verbose=False):
         """
         Write the AGN auxiliary truth table from the AGN db file.
+
+        Parameters
+        ----------
+        chunk_size: int [10000]
+            Number of records to read in at a time from the star db
+            file and write to the output file.
+        verbose: bool [False]
+            Flag to write the number of records that have been processed.
         """
-        seeds, taus, sfs = self._extract_variability_params()
+        bands = 'ugrizy'
+        curs = self.conn.execute(self.query)
+
         table_name = 'agn_auxiliary_info'
         cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
-               (id TEXT, host_galaxy BIGINT, flux_u DOUBLE,
-               flux_g DOUBLE, flux_r DOUBLE, flux_i DOUBLE
-               flux_z DOUBLE, flux_y DOUBLE, M_i DOUBLE,
-               seed BIGINT, tau_u DOUBLE, tau_g DOUBLE,
-               tau_r DOUBLE, tau_i DOUBLE, tau_z DOUBLE,
-               tau_y DOUBLE)'''
+                  (id TEXT, host_galaxy BIGINT, M_i DOUBLE, seed BIGINT,
+                  tau_u DOUBLE, tau_g DOUBLE, tau_r DOUBLE,
+                  tau_i DOUBLE, tau_z DOUBLE, tau_y DOUBLE,
+                  sf_u DOUBLE, sf_g DOUBLE, sf_r DOUBLE,
+                  sf_i DOUBLE, sf_z DOUBLE, sf_y DOUBLE)'''
         with sqlite3.connect(self.outfile) as conn:
             cursor = conn.cursor()
             cursor.execute(cmd)
             conn.commit()
+
+            irec = 0
+            while True:
+                ids, host_galaxies, M_is, seeds = [], [], [], []
+                taus = {_: [] for _ in bands}
+                sfs = {_: [] for _ in bands}
+                chunk = curs.fetchmany(chunk_size)
+                if not chunk:
+                    break
+                values = []
+                for row in chunk:
+                    if verbose:
+                        print(irec)
+                    irec += 1
+                    object_id \
+                        = row[self.icol['galaxy_id']]*1024 + self.agn_type_id
+                    pars = json.loads(row[self.icol['varParamStr']])['p']
+                    my_row = [object_id, row[self.icol['galaxy_id']],
+                              row[self.icol['M_i']], pars['seed']]
+                    my_row.extend([pars[f'agn_tau_{band}'] for band in bands])
+                    my_row.extend([pars[f'agn_sf_{band}'] for band in bands])
+                    values.append(my_row)
+                cursor.executemany(f'''INSERT INTO {table_name} VALUES
+                                       (?, ?, ?, ?,
+                                        ?, ?, ?, ?, ?, ?,
+                                        ?, ?, ?, ?, ?, ?)''', values)
+                conn.commit()
