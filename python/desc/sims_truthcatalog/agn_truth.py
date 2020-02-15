@@ -100,7 +100,8 @@ class AGNTruthWriter:
         if not os.path.isfile(agn_db_file):
             raise FileNotFoundError(f'{agn_db_file} not found.')
         self.conn = sqlite3.connect(agn_db_file)
-        query = 'select galaxy_id, magNorm, redshift, ra, dec from agn_params'
+        query = '''select galaxy_id, magNorm, redshift, ra, dec,
+                varParamStr from agn_params'''
         self.curs = self.conn.execute(query)
         self.icol = {_[0]: icol for icol, _ in enumerate(self.curs.description)}
 
@@ -166,3 +167,21 @@ class AGNTruthWriter:
                          flux_by_band_MW=flux_by_band_MW,
                          flux_by_band_noMW=flux_by_band_noMW,
                          good_ixes=range(len(ids)))
+
+    def write_auxiliary_truth(self):
+        """
+        Write the AGN auxiliary truth table from the AGN db file.
+        """
+        seeds, taus, sfs = self._extract_variability_params()
+        table_name = 'agn_auxiliary_info'
+        cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
+               (id TEXT, host_galaxy BIGINT, flux_u DOUBLE,
+               flux_g DOUBLE, flux_r DOUBLE, flux_i DOUBLE
+               flux_z DOUBLE, flux_y DOUBLE, M_i DOUBLE,
+               seed BIGINT, tau_u DOUBLE, tau_g DOUBLE,
+               tau_r DOUBLE, tau_i DOUBLE, tau_z DOUBLE,
+               tau_y DOUBLE)'''
+        with sqlite3.connect(self.outfile) as conn:
+            cursor = conn.cursor()
+            cursor.execute(cmd)
+            conn.commit()
