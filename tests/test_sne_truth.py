@@ -75,7 +75,7 @@ class SNeTruthWriterTestCase(unittest.TestCase):
         np.testing.assert_equal(self.sne_truth_writer.sne_df['snid_in'],
                                 df['id'].to_numpy())
         np.testing.assert_equal(self.sne_truth_writer.sne_df['galaxy_id'],
-                                df['host_galaxy_id'].to_numpy())
+                                df['host_galaxy'].to_numpy())
         np.testing.assert_equal(self.sne_truth_writer.sne_df['snra_in'],
                                 df['ra'].to_numpy())
         np.testing.assert_equal(self.sne_truth_writer.sne_df['t0_in'],
