@@ -135,7 +135,7 @@ class SNeTruthWriter:
         """
         table_name = 'sn_auxiliary_info'
         cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
-        (id TEXT, host_galaxy_id BIGINT, ra DOUBLE, dec DOUBLE,
+        (id TEXT, host_galaxy BIGINT, ra DOUBLE, dec DOUBLE,
         t0 FLOAT, x0 FLOAT, x1 FLOAT, c FLOAT, redshift FLOAT)'''
         with sqlite3.connect(self.outfile) as conn:
             cursor = conn.cursor()
