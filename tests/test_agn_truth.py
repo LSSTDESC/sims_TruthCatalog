@@ -74,8 +74,7 @@ class AGNTruthWriterTestCase(unittest.TestCase):
         opsim_db_file = os.path.join(self.data_dir,
                                      'minion_1016_desc_dithered_v4_small.db')
         agn_truth_writer = AGNTruthWriter(self.outfile, self.agn_db_file)
-        agn_truth_writer.write_variability_truth(opsim_db_file, max_rows=100,
-                                                 verbose=True)
+        agn_truth_writer.write_variability_truth(opsim_db_file, max_rows=100)
 
 
 if __name__ == '__main__':
