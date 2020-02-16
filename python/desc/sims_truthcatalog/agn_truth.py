@@ -107,6 +107,11 @@ class AGNTruthWriter:
         curs = self.conn.execute(self.query)
         self.icol = {_[0]: icol for icol, _ in enumerate(curs.description)}
 
+    @staticmethod
+    def object_id(galaxy_id):
+        """Return the AGN object ID based on the host galaxy ID"""
+        return str(galaxy_id*1024 + AGNTruthWriter.agn_type_id)
+
     def write(self, chunk_size=10000, verbose=False):
         '''
         Extract the column data from the agn db file and write
@@ -142,8 +147,7 @@ class AGNTruthWriter:
                 ra.append(row[self.icol['ra']])
                 dec.append(row[self.icol['dec']])
                 redshift.append(row[self.icol['redshift']])
-                object_id = row[self.icol['galaxy_id']]*1024 + self.agn_type_id
-                ids.append(str(object_id))
+                ids.append(self.object_id(row[self.icol['galaxy_id']]))
                 galaxy_ids.append(row[self.icol['galaxy_id']])
                 sed_file = find_sed_file('agnSED/agn.spec.gz')
 
@@ -211,11 +215,11 @@ class AGNTruthWriter:
                     if verbose:
                         print(irec)
                     irec += 1
-                    object_id \
-                        = row[self.icol['galaxy_id']]*1024 + self.agn_type_id
                     pars = json.loads(row[self.icol['varParamStr']])['p']
-                    my_row = [object_id, row[self.icol['galaxy_id']],
-                              row[self.icol['M_i']], pars['seed']]
+                    my_row = [self.object_id(row[self.icol['galaxy_id']]),
+                              row[self.icol['galaxy_id']],
+                              row[self.icol['M_i']],
+                              pars['seed']]
                     my_row.extend([pars[f'agn_tau_{band}'] for band in bands])
                     my_row.extend([pars[f'agn_sf_{band}'] for band in bands])
                     values.append(my_row)
@@ -224,3 +228,102 @@ class AGNTruthWriter:
                                         ?, ?, ?, ?, ?, ?,
                                         ?, ?, ?, ?, ?, ?)''', values)
                 conn.commit()
+
+    def write_variability_truth(self, opsim_db_file, fp_radius=2.05,
+                                max_rows=None, verbose=False):
+        """
+        Write the AGN fluxes for each visit.
+
+        Parameters
+        ----------
+        opsim_db_file: str
+            The sqlite3 file containing the OpSim Summary table which
+            has the pointing information for each visit.
+        fp_radius: float [2.05]
+            Effective radius of the focal plane in degrees.  This defines
+            the acceptance cone centered on the pointing direction for
+            determining if an object is being observed by LSST for the
+            purpose of computing a flux entry for the visit to be entered
+            in the Variability Truth Table.
+        max_rows: int [None]
+            Threshold number of rows to write to the table.  This is useful
+            for testing.  If None, then write all entries for all SNe in
+            the sne_db_file.
+        """
+        bands = 'ugrizy'
+
+        # Retrieve the pointing information for each visit from the opsim db.
+        with sqlite3.connect(opsim_db_file) as conn:
+            opsim_df = pd.read_sql(
+                '''select obsHistID, descDitheredRA, descDitheredDec, filter,
+                   expMJD from Summary''', conn)
+        opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
+        opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
+
+        # Create the Variability Truth table.
+        table_name = 'agn_variability_truth'
+        cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
+                  (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
+                  delta_flux FLOAT, magNorm FLOAT)'''
+        with sqlite3.connect(self.outfile) as conn:
+            cursor = conn.cursor()
+            cursor.execute(cmd)
+            conn.commit()
+
+            # Loop over rows in AGN db and add the flux for each
+            # observation where the AGN is observed by LSST.
+            sed_file = find_sed_file('agnSED/agn.spec.gz')
+            agn_db_curs = self.conn.execute(self.query)
+            row = agn_db_curs.fetchone()
+            num_rows = 0
+            while row is not None:
+                # Extract the AGN info and model parameters.
+                object_id = self.object_id(row[self.icol['galaxy_id']])
+                ra = row[self.icol['ra']]
+                dec = row[self.icol['dec']]
+                magNorm = row[self.icol['magNorm']]
+                redshift = row[self.icol['redshift']]
+                params = json.loads(row[self.icol['varParamStr']])['p']
+                seed = params['seed']
+
+                # Compute baseline fluxes in each band.
+                synth_phot = SyntheticPhotometry(sed_file, magNorm, redshift)
+                gAv, gRv = synth_phot.add_MW_dust(ra, dec)
+                flux0 = {band: synth_phot.calcFlux(band) for band in bands}
+
+                # Select the visits from the opsim db in which the AGN
+                # is observed by applying cuts on the sky coordinates.
+                dec_cut = f'{dec - fp_radius} <= dec <= {dec + fp_radius}'
+                df = pd.DataFrame(opsim_df.query(dec_cut))
+                df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
+                                                  df['dec'].to_numpy(), ra, dec)
+                df = df.query(f'ang_sep <= {fp_radius}')
+                # Compute delta fluxes for each band.
+                for band in bands:
+                    tau = params[f'agn_tau_{band}']
+                    sf = params[f'agn_sf_{band}']
+                    my_df = df.query(f'filter == "{band}"')
+                    if len(my_df) == 0:
+                        continue
+                    obsHistIDs = my_df['obsHistID'].to_list()
+                    mjds = my_df['expMJD'].to_numpy()
+                    mag_norms = (agn_mag_norms(mjds, redshift, tau, sf, seed)
+                                 + magNorm)
+                    values = []
+                    for obsHistID, mjd, mag_norm in zip(obsHistIDs, mjds,
+                                                        mag_norms):
+                        synth_phot = SyntheticPhotometry(sed_file, mag_norm,
+                                                         redshift=redshift,
+                                                         gAv=gAv, gRv=gRv)
+                        delta_flux = synth_phot.calcFlux(band) - flux0[band]
+                        values.append((object_id, obsHistID, mjd, band,
+                                       delta_flux, mag_norm))
+                    cursor.executemany(f'''INSERT INTO {table_name} VALUES
+                                           (?, ?, ?, ?, ?, ?)''', values)
+                    conn.commit()
+                    num_rows += len(values)
+                    if verbose:
+                        print(num_rows)
+                    if max_rows is not None and num_rows > max_rows:
+                        return
+                row = agn_db_curs.fetchone()
