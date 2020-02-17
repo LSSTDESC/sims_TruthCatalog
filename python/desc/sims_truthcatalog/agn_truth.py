@@ -16,7 +16,7 @@ from .write_sqlite import write_sqlite
 __all__ = ['AGNTruthWriter', 'agn_mag_norms']
 
 
-def agn_mag_norms(mjds, redshift, tau, sf, seed):
+def agn_mag_norms(mjds, redshift, tau, sf, seed, start_date=58580.):
     """
     Return the delta mag_norm values wrt the infinite-time average
     mag_norm for the provided AGN light curve parameters.  mag_norm is
@@ -37,6 +37,10 @@ def agn_mag_norms(mjds, redshift, tau, sf, seed):
         long time scales.
     seed: int
         Random number seed.
+    start_date: float [58580.]
+        Start date for the random walk in MJD.  This will ensure that the
+        same random walk is generated for a given redshift, tau, sf,
+        and seed regardless of the mjds requested.
 
     Returns
     -------
@@ -47,8 +51,13 @@ def agn_mag_norms(mjds, redshift, tau, sf, seed):
     This code is stolen from
     https://github.com/astroML/astroML/blob/master/astroML/time_series/generate.py
     """
+    if min(mjds) < start_date:
+        raise RuntimeError(f'mjds must start after {start_date}')
+
+    t_obs = np.arange(start_date, max(mjds + 1), dtype=float)
+    t_rest = t_obs/(1 + redshift)/tau
+
     rng = np.random.RandomState(seed)
-    t_rest = mjds/(1 + redshift)/tau
     nbins = len(t_rest)
     steps = rng.normal(0, 1, nbins)
     delta_mag_norm = np.zeros(nbins)
@@ -57,7 +66,7 @@ def agn_mag_norms(mjds, redshift, tau, sf, seed):
         dt = t_rest[i] - t_rest[i - 1]
         delta_mag_norm[i] \
             = delta_mag_norm[i - 1]*(1. - dt) + np.sqrt(2*dt)*sf*steps[i]
-    return delta_mag_norm
+    return np.interp(mjds, t_obs, delta_mag_norm)
 
 
 class AGNTruthWriter:

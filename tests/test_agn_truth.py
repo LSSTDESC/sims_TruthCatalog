@@ -4,8 +4,28 @@ Unit test code for agn_truth.py module.
 import os
 import unittest
 import sqlite3
+import numpy as np
 import pandas as pd
-from desc.sims_truthcatalog import AGNTruthWriter
+from desc.sims_truthcatalog import AGNTruthWriter, agn_mag_norms
+
+
+class AGNMagNormsTestCase(unittest.TestCase):
+    '''
+    Test case class for agn_mag_norms function.
+    '''
+    def test_agn_mag_norms(self):
+        '''
+        Test for agn_mag_norms.
+        '''
+        mjds = np.arange(58600.3, 58900, 0.5)
+        redshift = 0.5
+        tau = 23.
+        sf = 0.3
+        seed = 19081
+        mags = agn_mag_norms(mjds, redshift, tau, sf, seed)
+        mags_2nd_half = agn_mag_norms(mjds[len(mjds)//2:], redshift, tau,
+                                      sf, seed)
+        np.testing.assert_equal(mags[len(mjds)//2:], mags_2nd_half)
 
 
 class AGNTruthWriterTestCase(unittest.TestCase):
