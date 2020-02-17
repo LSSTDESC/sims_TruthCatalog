@@ -16,8 +16,7 @@ from .write_sqlite import write_sqlite
 __all__ = ['AGNTruthWriter', 'agn_mag_norms']
 
 
-def agn_mag_norms(mjds, redshift, tau, sf, seed, start_date=58580.,
-                  dt_frac=1e-2):
+def agn_mag_norms(mjds, redshift, tau, sf, seed):
     """
     Return the delta mag_norm values wrt the infinite-time average
     mag_norm for the provided AGN light curve parameters.  mag_norm is
@@ -25,8 +24,9 @@ def agn_mag_norms(mjds, redshift, tau, sf, seed, start_date=58580.,
 
     Parameters
     ----------
-    mjds: list-like
+    mjds: np.array
         Times at which to evaluate the light curve delta flux values in MJD.
+        Observer frame.
     redshift: float
         Redshift of the AGN, used to account for time-dilation between
         rest frame and observer frame.
@@ -37,11 +37,6 @@ def agn_mag_norms(mjds, redshift, tau, sf, seed, start_date=58580.,
         long time scales.
     seed: int
         Random number seed.
-    start_date: float [58580.]
-        Start date for light curve generation in MJD.
-    dt_frac: float [1e-2]
-        Fraction of tau to use as the time step for generating the
-        light curve.
 
     Returns
     -------
@@ -49,36 +44,19 @@ def agn_mag_norms(mjds, redshift, tau, sf, seed, start_date=58580.,
 
     Notes
     -----
-    This implementation is based on the model described in
-    Macleod et al. 2010, ApJ, 721, 1014 (https://arxiv.org/abs/1004.0276),
-    and was derived from the _simulated_agn function in
-    https://github.com/lsst/sims_catUtils/blob/master/python/lsst/sims/catUtils/mixins/VariabilityMixin.py
+    This code is stolen from
+    https://github.com/astroML/astroML/blob/master/astroML/time_series/generate.py
     """
-    duration_rest_frame = (max(mjds) - start_date)/(1. + redshift)
-    dt = tau*dt_frac
-    nbins = int(math.ceil(duration_rest_frame/dt)) + 1
-    time_indexes = np.round((mjds - start_date)/(1. + redshift)/dt).astype(int)
-    time_index_map = defaultdict(list)
-    ct_index = 0
-    for i, t_index in enumerate(time_indexes):
-        time_index_map[t_index].append(i)
-
     rng = np.random.RandomState(seed)
-    es = rng.normal(0, 1., nbins)*np.sqrt(dt_frac)
-    dx2 = 0
-    x1 = 0
-    x2 = 0
-    delta_mag_norm = np.zeros(len(mjds))
-    for it in range(nbins):
-        dx1 = dx2
-        dx2 = -dx1*dt_frac + sf*es[it] + dx1
-        x1 = x2
-        x2 += dt
-        if it in time_index_map:
-            for it_out in time_index_map[it]:
-                local_end = (mjds[it_out] - start_date)/(1. + redshift)
-                dm_val = (local_end*(dx1 - dx2) + dx2*x1 - dx1*x2)/(x1 - x2)
-                delta_mag_norm[it_out] = dm_val
+    t_rest = mjds/(1 + redshift)/tau
+    nbins = len(t_rest)
+    steps = rng.normal(0, 1, nbins)
+    delta_mag_norm = np.zeros(nbins)
+    delta_mag_norm[0] = steps[0]*sf
+    for i in range(1, nbins):
+        dt = t_rest[i] - t_rest[i - 1]
+        delta_mag_norm[i] \
+            = delta_mag_norm[i - 1]*(1. - dt) + np.sqrt(2*dt)*sf*steps[i]
     return delta_mag_norm
 
 
