@@ -18,8 +18,11 @@ def find_sed_file(sed_file):
     Return the full path to the SED file assuming it is in the
     lsst_sims SED library.
     """
-    full_path = os.path.join(os.environ['SIMS_SED_LIBRARY_DIR'],
-                             defaultSpecMap[sed_file])
+    try:
+        spec_file = defaultSpecMap[sed_file]
+    except KeyError:
+        spec_file = sed_file
+    full_path = os.path.join(os.environ['SIMS_SED_LIBRARY_DIR'], spec_file)
     if not os.path.isfile(full_path):
         raise FileNotFoundError(full_path)
     return full_path
@@ -68,6 +71,8 @@ class SyntheticPhotometry:
     # SyntheticPhotometry instances to take advantage of the caching of
     # the a(x) and b(x) arrays used by the dust models.
     dust_models = dict(ccm=CCMmodel())
+    lsst_bp_dict = sims_photUtils.BandpassDict.loadTotalBandpassesFromFiles()
+    ebv_model = EBVbase()
     def __init__(self, sed_file, mag_norm, redshift=0, iAv=0, iRv=3.1,
                  gAv=0, gRv=3.1, dust_model_name='ccm', bp_dict=None):
         """
@@ -110,11 +115,9 @@ class SyntheticPhotometry:
         self.gRv = gRv
         self.dust_model_name = dust_model_name
         if bp_dict is None:
-            self.bp_dict \
-                = sims_photUtils.BandpassDict.loadTotalBandpassesFromFiles()
+            self.bp_dict = self.lsst_bp_dict
         if sed_file is not None:
             self._create_sed()
-        self.ebv_model = EBVbase()
 
     @staticmethod
     def create_from_sed(sed, redshift):
@@ -126,11 +129,17 @@ class SyntheticPhotometry:
                                        =synth_phot.bp_dict.wavelenMatch)
         return synth_phot
 
-    def add_MW_dust(self, ra, dec, Rv=3.1):
+    @staticmethod
+    def get_MW_AvRv(ra, dec, Rv=3.1):
         eq_coord = np.array([[np.radians(ra)], [np.radians(dec)]])
-        ebv = self.ebv_model.calculateEbv(equatorialCoordinates=eq_coord,
-                                          interp=True)
+        ebv = SyntheticPhotometry.ebv_model\
+                                 .calculateEbv(equatorialCoordinates=eq_coord,
+                                               interp=True)
         Av = Rv*ebv
+        return Av, Rv
+
+    def add_MW_dust(self, ra, dec, Rv=3.1):
+        Av, _ = self.get_MW_AvRv(ra, dec, Rv=Rv)
         self.add_dust(Av, Rv, 'Galactic')
         return Av, Rv
 
