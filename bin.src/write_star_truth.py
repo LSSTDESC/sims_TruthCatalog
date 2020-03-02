@@ -16,14 +16,14 @@ if __name__ == "__main__":
                         help='Destination path for output sqlite file')
     parser.add_argument('--star-db', type=str,
                         default='/global/projecta/projectdirs/lsst/groups/SSim/DC2/dc2_stellar_healpixel.db',
-                        help='where to find star db')
+                        help='where to find star db (default: %(default)s)')
     parser.add_argument('--row-limit', dest='row_limit',
                         type=int, default=None,
-                        help='max stars to handle per spawned process')
+                        help='max stars to handle per spawned process (default: no limit)')
     parser.add_argument('--max-parallel', dest='parallel', type=int, default=20,
-                        help='Max number of chunks allowed to run concurrently')
+                        help='Max number of chunks allowed to run concurrently (default: %(default)s)')
     parser.add_argument('--dry-run', action='store_true',
-                        help='no computation or database write')
+                        help='if specified, no computation or database write (default: False)')
     args = parser.parse_args()
     print('write_star_truth invoked with arguments')
     for e in dir(args):

@@ -90,7 +90,7 @@ class StarTruthWriter:
     '''
     
     def __init__(self, outfile, star_db_file, radec_bounds=None,
-                 row_limit=None, max_parallel=20, dry_run=False):
+                 row_limit=None, max_parallel=1, dry_run=False):
         """
         Parameters
         ----------
@@ -130,7 +130,6 @@ class StarTruthWriter:
         if row_limit is not None:
             self.per_process = min(self.per_process, row_limit)
 
-        ###self.conn = sqlite3.connect(star_db_file)
         self.query = '''select simobjid, ra, decl, varParamStr, sedFilename,
                      magNorm from stars where '''
         if radec_bounds is not None:
@@ -138,11 +137,6 @@ class StarTruthWriter:
                            f'ra <= {radec_bounds[1]} and ' +
                            f'{radec_bounds[2]} <= decl and ' +
                            f'decl <= {radec_bounds[3]} and ')
-
-        # self.curs = self.conn.execute(query)
-        # self.icol = {_[0]: icol for icol, _ in enumerate(self.curs.description)}
-        # Also will have to add a condition on range of rowid
-        # and need to order by rowid
 
     def write(self, chunk_size=10000, verbose=False):
         '''
@@ -161,6 +155,7 @@ class StarTruthWriter:
 
         db_lock = Lock()
         p_list = []
+
         # For each process to be spawned, assemble query string
         for i_p in range(self.max_parallel):
             row_cut = 'rowid > {} and rowid <= {} order by rowid'.format(i_p * self.per_process, (i_p + 1) * self.per_process)
