@@ -87,12 +87,13 @@ class SNSynthPhotFactory:
         # Pass any attribute access requests to the SNObject instance.
         return getattr(self.sn_obj, attr)
 
+global _opsim_df = None
 
 class SNeTruthWriter:
     '''
     Write Summary and Variable truth tables for SNe.
     '''
-    def __init__(self, outfile, sne_db_file):
+    def __init__(self, outfile, sne_db_file, sne_limit=None, dry_run=False):
         """
         Parameters
         ----------
@@ -100,20 +101,36 @@ class SNeTruthWriter:
             Name of the sqlite3 file to contain the truth tables.
         sne_db_file: str
             The sqlite3 file containing the SNe model parameters.
+        sne_limit: int 
+            Maximum number of SNe to process. Default: no limit
+        dry_run: boolean
+            No actual db write.  Default: False
         """
         self.outfile = outfile
         if os.path.isfile(outfile):
             raise OSError(f'{outfile} already exists.')
         if not os.path.isfile(sne_db_file):
             raise FileNotFoundError(f'{sne_db_file} not found.')
-        with sqlite3.connect(sne_db_file) as conn:
-            self.sne_df = pd.read_sql('select * from sne_params', conn)
+        self.dry_run = dry_run
+        self.sne_limit = sne_limit
 
+        q = 'select galaxy_id, c_in, t0_in, x0_in, x1_in, z_in, snid_in, snra_in, sndec_in from sne_params order by rowid '
+        if sne_limit is not None:
+            q += 'limit {}'.format(sne_limit)
+        print('The query: ', q)
+        with sqlite3.connect(sne_db_file) as conn:
+            #self.sne_df = pd.read_sql('select * from sne_params', conn)
+            self.sne_df = pd.read_sql(q, conn)
+
+        print(len(self.sne_df))
+              
     def write(self):
         '''
         Extract the column data from the SNe db file and write the
         sqlite file.
         '''
+        if (self.dry_run):
+            return
         zeros = np.zeros(len(self.sne_df))
         ones = np.ones(len(self.sne_df))
         write_sqlite(self.outfile,
@@ -133,6 +150,8 @@ class SNeTruthWriter:
         Write the SN Auxiliary truth table from the SNe db file.
         This is almost a direct transcription of the columns.
         """
+        if (self.dry_run):
+            return
         table_name = 'sn_auxiliary_info'
         cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
         (id TEXT, host_galaxy BIGINT, ra DOUBLE, dec DOUBLE,
@@ -156,7 +175,7 @@ class SNeTruthWriter:
             conn.commit()
 
     def write_variability_truth(self, opsim_db_file, fp_radius=2.05,
-                                max_rows=None):
+                                max_rows=None, max_parallel=1):
         """
         Write the Variability Truth Table. This will contain light curve
         points for visits in which the SN was being observed by LSST.
@@ -185,6 +204,11 @@ class SNeTruthWriter:
         opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
         opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
 
+        _opsim_df = opsim_df
+
+        #if (self.dry_run):
+        #    print('Len of opsim_df: ', len(opsim_df))
+        #    return
         # Create the Variability Truth table.
         table_name = 'sn_variability_truth'
         cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
@@ -195,6 +219,9 @@ class SNeTruthWriter:
             cursor.execute(cmd)
             conn.commit()
 
+
+
+            
             # Loop over rows in the SN database and add the flux for
             # each observation where the SN is observed by LSST.
             num_rows = 0
