@@ -83,7 +83,6 @@ def _process_chunk(db_lock, star_db_file, query_string, outfile,
             db_lock.release()
 
 
-###
 class StarTruthWriter:
     '''
     Write Summary and Variable truth tables for stars.

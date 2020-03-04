@@ -1,7 +1,4 @@
-import argparse
-import os
-from desc.sims_truthcatalog.star_truth import StarTruthWriter
-
+#!/usr/bin/env python
 '''
 Interface to module which writes a truth catalog or part of a truth
 catalog for some or all stars coming from a star db file.
@@ -9,6 +6,10 @@ For usage type
   $ python write_star_truth.py --help
 
 '''
+import argparse
+import os
+from desc.sims_truthcatalog.star_truth import StarTruthWriter
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Write a truth catalog (sqlite) for stars from the specified healpixel')
