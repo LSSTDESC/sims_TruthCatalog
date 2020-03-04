@@ -12,7 +12,7 @@ from desc.sims_truthcatalog.star_truth import StarTruthWriter
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Write a truth catalog (sqlite) for stars from the specified healpixel')
+    parser = argparse.ArgumentParser(description='Write summary truth catalog (sqlite) for stars')
     parser.add_argument('outfile', type=str,
                         help='Destination path for output sqlite file')
     parser.add_argument('--star-db', type=str,
