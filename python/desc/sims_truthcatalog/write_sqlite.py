@@ -42,3 +42,7 @@ def write_sqlite(dbfile, ids, galaxy_ids, ra, dec, redshift, is_variable,
                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                            values)
         conn.commit()
+
+        # index to speed up location searches
+        cursor.execute('create index radec_ix on truth_summary(ra,dec)')
+        conn.commit()

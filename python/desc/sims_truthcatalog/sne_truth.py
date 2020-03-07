@@ -5,6 +5,7 @@ import os
 import sqlite3
 import numpy as np
 import pandas as pd
+from multiprocessing import Process, Lock
 from lsst.sims.catUtils.supernovae import SNObject
 from lsst.sims.photUtils import BandpassDict
 from lsst.sims.utils import angularSeparation
@@ -14,6 +15,9 @@ from .write_sqlite import write_sqlite
 
 __all__ = ['SNeTruthWriter', 'SNSynthPhotFactory']
 
+
+# For use in parallelizing variability table
+_opsim_df = None
 
 class SNSynthPhotFactory:
     """
@@ -87,13 +91,92 @@ class SNSynthPhotFactory:
         # Pass any attribute access requests to the SNObject instance.
         return getattr(self.sn_obj, attr)
 
-global _opsim_df = None
+    
+def _process_chunk(db_lock, outfile, sne_db_file, sne_db_query, opsim_df,
+                   fp_radius, process_num, max_rows, dry_run, verbose):
+    '''
+    Compute and write out variability for a manageable chunk of SNe
+    '''
+
+    if verbose or dry_run:
+        print("_process_chunk called for process #{} ".format(process_num))
+        print("query_string: \n{}".format(sne_db_query))
+
+    # table_name should perhaps be yet another argument
+    table_name = 'sn_variability_truth'
+    
+    if dry_run:
+        return
+
+    # Get our batch from sne_db_file
+    with sqlite3.connect(sne_db_file) as conn:
+        sne_df = pd.read_sql(sne_db_query, conn)
+    if (verbose):
+        print("Process {} has  {} sne".format(process_num, len(sne_df)))
+
+    # Loop over rows in the SN database and add the flux for
+    # each observation where the SN is observed by LSST.
+    num_rows = 0
+
+    for iloc in range(len(sne_df)):
+        row = sne_df.iloc[iloc]
+        params = {_: row[f'{_}_in'] for _ in
+                  'z t0 x0 x1 c snra sndec'.split()}
+        sp_factory = SNSynthPhotFactory(**params)
+
+        # Make cuts on time based on sncosmo valid model range
+        # and on allowed range of Declination values.
+        tmin, tmax = sp_factory.mintime(), sp_factory.maxtime()
+        dmin, dmax = row.sndec_in - fp_radius, row.sndec_in + fp_radius
+        df = pd.DataFrame(
+            opsim_df.query(f'{tmin} <= expMJD <= {tmax} and '
+                           f'{dmin} <= dec <= {dmax}'))
+
+        # Compute angular separation from SN position to use
+        # for applying acceptance cone cut.
+        df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
+                                          df['dec'].to_numpy(),
+                                          row.snra_in, row.sndec_in)
+        df = df.query(f'ang_sep <= {fp_radius}')
+
+        # Insert the rows into the variability truth table.
+        values = []
+        for visit, band, mjd in zip(df['obsHistID'], df['filter'],
+                                    df['expMJD']):
+            synth_phot = sp_factory.create(mjd)
+            values.append((row.snid_in, visit, mjd, band,
+                           synth_phot.calcFlux(band)))
+        if len(values) == 0:
+            if (verbose):
+                print("Process {}: no rows found for id {}".format(process_num, row.snid_in))                
+            continue
+        
+        if not db_lock.acquire(timeout=60.0):
+            print('Process {} failed to acquire outpout lock'.format(i_p))
+            exit(1)
+
+        with sqlite3.connect(outfile) as out_conn:
+            cursor = out_conn.cursor()
+        
+
+            cursor.executemany(f'''INSERT INTO {table_name} VALUES (?,?,?,?,?)''', values)
+            out_conn.commit()
+            
+        db_lock.release()
+        
+        num_rows += len(values)
+        if verbose:
+            print('Process {} inserting {} rows for id {} '.format(process_num,
+                                                                   len(values),
+                                                                   row.snid_in))
+        if max_rows is not None and num_rows > max_rows:
+            break
 
 class SNeTruthWriter:
     '''
     Write Summary and Variable truth tables for SNe.
     '''
-    def __init__(self, outfile, sne_db_file, sne_limit=None, dry_run=False):
+    def __init__(self, outfile, sne_db_file, max_parallel=1, dry_run=False):
         """
         Parameters
         ----------
@@ -112,18 +195,19 @@ class SNeTruthWriter:
         if not os.path.isfile(sne_db_file):
             raise FileNotFoundError(f'{sne_db_file} not found.')
         self.dry_run = dry_run
-        self.sne_limit = sne_limit
+        self.sne_db_file = sne_db_file
 
         q = 'select galaxy_id, c_in, t0_in, x0_in, x1_in, z_in, snid_in, snra_in, sndec_in from sne_params order by rowid '
-        if sne_limit is not None:
-            q += 'limit {}'.format(sne_limit)
         print('The query: ', q)
         with sqlite3.connect(sne_db_file) as conn:
             #self.sne_df = pd.read_sql('select * from sne_params', conn)
             self.sne_df = pd.read_sql(q, conn)
 
-        print(len(self.sne_df))
-              
+            curs = conn.execute('select max(rowid) from sne_params')
+            self.rowid_max = curs.fetchone()[0]
+
+        self.per_process = int((self.rowid_max + max_parallel - 1)/max_parallel)
+        
     def write(self):
         '''
         Extract the column data from the SNe db file and write the
@@ -175,7 +259,7 @@ class SNeTruthWriter:
             conn.commit()
 
     def write_variability_truth(self, opsim_db_file, fp_radius=2.05,
-                                max_rows=None, max_parallel=1):
+                                max_rows=None, max_parallel=1, verbose=False):
         """
         Write the Variability Truth Table. This will contain light curve
         points for visits in which the SN was being observed by LSST.
@@ -192,9 +276,13 @@ class SNeTruthWriter:
             purpose of computing a flux entry for the visit to be entered
             in the Variability Truth Table.
         max_rows: int [None]
-            Threshold number of rows to write to the table.  This is useful
+            Threshold number of rows per process to write to the table.  This is useful
             for testing.  If None, then write all entries for all SNe in
             the sne_db_file.
+        max_parallel: int [1]
+            split work among this number of processes
+        verbose: boolean [False]
+            if True write debug output
         """
         # Read in pointing and filter info from the OpSim db file.
         with sqlite3.connect(opsim_db_file) as conn:
@@ -206,56 +294,39 @@ class SNeTruthWriter:
 
         _opsim_df = opsim_df
 
-        #if (self.dry_run):
-        #    print('Len of opsim_df: ', len(opsim_df))
-        #    return
         # Create the Variability Truth table.
         table_name = 'sn_variability_truth'
         cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
                   (id TEXT, obsHistID INT, MJD FLOAT, bandpass TEXT,
                   delta_flux FLOAT)'''
-        with sqlite3.connect(self.outfile) as conn:
-            cursor = conn.cursor()
-            cursor.execute(cmd)
-            conn.commit()
-
-
-
-            
-            # Loop over rows in the SN database and add the flux for
-            # each observation where the SN is observed by LSST.
-            num_rows = 0
-            for iloc in range(len(self.sne_df)):
-                row = self.sne_df.iloc[iloc]
-                params = {_: row[f'{_}_in'] for _ in
-                          'z t0 x0 x1 c snra sndec'.split()}
-                sp_factory = SNSynthPhotFactory(**params)
-
-                # Make cuts on time based on sncosmo valid model range
-                # and on allowed range of Declination values.
-                tmin, tmax = sp_factory.mintime(), sp_factory.maxtime()
-                dmin, dmax = row.sndec_in - fp_radius, row.sndec_in + fp_radius
-                df = pd.DataFrame(
-                    opsim_df.query(f'{tmin} <= expMJD <= {tmax} and '
-                                   f'{dmin} <= dec <= {dmax}'))
-
-                # Compute angular separation from SN position to use
-                # for applying acceptance cone cut.
-                df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
-                                                  df['dec'].to_numpy(),
-                                                  row.snra_in, row.sndec_in)
-                df = df.query(f'ang_sep <= {fp_radius}')
-
-                # Insert the rows into the variability truth table.
-                values = []
-                for visit, band, mjd in zip(df['obsHistID'], df['filter'],
-                                            df['expMJD']):
-                    synth_phot = sp_factory.create(mjd)
-                    values.append((row.snid_in, visit, mjd, band,
-                                   synth_phot.calcFlux(band)))
-                cursor.executemany(f'''INSERT INTO {table_name}
-                                       VALUES (?,?,?,?,?)''', values)
+        if not self.dry_run:
+            with sqlite3.connect(self.outfile) as conn:
+                cursor = conn.cursor()
+                cursor.execute(cmd)
                 conn.commit()
-                num_rows += len(values)
-                if max_rows is not None and num_rows > max_rows:
-                    break
+
+        db_lock = Lock()
+        p_list = []
+
+        # Same query as before except don't need galaxy_id and include conditions on rowid
+        q = 'select c_in, t0_in, x0_in, x1_in, z_in, snid_in, snra_in, sndec_in from sne_params '
+        
+        for i_p in range(max_parallel):
+            row_cut = 'where rowid > {} and rowid <= {} order by rowid'.format(i_p * self.per_process, (i_p + 1) * self.per_process)
+            i_query = q + row_cut
+
+            p = Process(target=_process_chunk, name='proc_{}'.format(i_p),
+                        args=(db_lock, self.outfile, self.sne_db_file, i_query,
+                              _opsim_df, fp_radius, i_p, max_rows, self.dry_run,
+                              verbose))
+            p.start()
+            p_list.append(p)
+
+        for p in p_list:
+            p.join()
+
+        # Finally, index to make look-up of light curves faster
+        if not self.dry_run:
+            with sqlite3.connect(self.outfile) as conn:
+                conn.cursor().execute('create index snid_ix on sn_variability_truth(id)')
+                conn.commit()
