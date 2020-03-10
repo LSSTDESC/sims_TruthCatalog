@@ -150,19 +150,17 @@ def _process_chunk(db_lock, outfile, sne_db_file, sne_db_query, opsim_df,
             if (verbose):
                 print("Process {}: no rows found for id {}".format(process_num, row.snid_in))                
             continue
-        
-        if not db_lock.acquire(timeout=60.0):
-            print('Process {} failed to acquire outpout lock'.format(i_p))
-            exit(1)
 
         with sqlite3.connect(outfile) as out_conn:
             cursor = out_conn.cursor()
         
+            if not db_lock.acquire(timeout=60.0):
+                print('Process {} failed to acquire output lock'.format(i_p))
+                exit(1)
 
             cursor.executemany(f'''INSERT INTO {table_name} VALUES (?,?,?,?,?)''', values)
             out_conn.commit()
-            
-        db_lock.release()
+            db_lock.release()
         
         num_rows += len(values)
         if verbose:

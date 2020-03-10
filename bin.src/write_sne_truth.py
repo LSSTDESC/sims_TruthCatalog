@@ -41,7 +41,7 @@ sys.stdout.flush()
 writer = desc.sims_truthcatalog.SNeTruthWriter(args.outfile, args.sne_db_file,
                                                max_parallel=args.max_parallel,
                                                dry_run=args.dry_run)
-print('Created instance at ', dt.now())
+print('Created SNeTruthWriter instance at ', dt.now())
 if not args.no_summary:
     writer.write()
     print('Wrote summary table at ', dt.now())
@@ -61,4 +61,4 @@ if args.variable_table:
                                    verbose=args.verbose)
     print('Wrote variability table at ', dt.now())
 
-print('write_sne_truth done')
+print('write_sne_truth done at', dt.now())
