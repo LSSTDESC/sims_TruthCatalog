@@ -29,27 +29,20 @@ parser.add_argument('--verbose', action='store_true',
 
 args = parser.parse_args()
 
-print('write_sne_truth invoked with arguments')
-for e in dir(args):
-    if not e.startswith('_'):
-        nm = 'args.' + e
-        print('{}: {}'.format(e, eval(nm)))
-
-print(dt.now())
-sys.stdout.flush()
-
+desc.sims_truthcatalog.print_callinfo(sys.argv[0], args)
+time_fmt = desc.sims_truthcatalog.TIME_TO_SECOND_FMT
 writer = desc.sims_truthcatalog.SNeTruthWriter(args.outfile, args.sne_db_file,
                                                max_parallel=args.max_parallel,
                                                dry_run=args.dry_run)
-print('Created SNeTruthWriter instance at ', dt.now())
+print('{}   Created SNeTruthWriter instance'.format(dt.now().strftime(time_fmt)))
 if not args.no_summary:
     writer.write()
-    print('Wrote summary table at ', dt.now())
+    print('{}   Wrote summary table'.format(dt.now().strftime(time_fmt)))
     sys.stdout.flush()
     
 if args.aux_table:
     writer.write_auxiliary_truth()
-    print('Wrote aux table at ', dt.now())
+    print('{}   Wrote aux table'.format(dt.now().strftime(time_fmt)))
     sys.stdout.flush()
 
 if args.variable_table:
@@ -59,6 +52,6 @@ if args.variable_table:
                                    max_rows=args.row_limit,
                                    max_parallel=args.max_parallel,
                                    verbose=args.verbose)
-    print('Wrote variability table at ', dt.now())
+    print('{}   Wrote variability table', dt.now().strftime(time_fmt))
 
-print('write_sne_truth done at', dt.now())
+print('{}   write_sne_truth done'.format(dt.now().strftime(time_fmt)))

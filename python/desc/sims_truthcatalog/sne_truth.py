@@ -111,7 +111,7 @@ def _process_chunk(db_lock, outfile, sne_db_file, sne_db_query, opsim_df,
     # Get our batch from sne_db_file
     with sqlite3.connect(sne_db_file) as conn:
         sne_df = pd.read_sql(sne_db_query, conn)
-    if (verbose):
+    if verbose:
         print("Process {} has  {} sne".format(process_num, len(sne_df)))
 
     # Loop over rows in the SN database and add the flux for
@@ -198,7 +198,6 @@ class SNeTruthWriter:
         q = 'select galaxy_id, c_in, t0_in, x0_in, x1_in, z_in, snid_in, snra_in, sndec_in from sne_params order by rowid '
         print('The query: ', q)
         with sqlite3.connect(sne_db_file) as conn:
-            #self.sne_df = pd.read_sql('select * from sne_params', conn)
             self.sne_df = pd.read_sql(q, conn)
 
             curs = conn.execute('select max(rowid) from sne_params')
