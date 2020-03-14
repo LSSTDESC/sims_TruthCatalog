@@ -10,7 +10,7 @@ import lsst.sims.photUtils as sims_photUtils
 import lsst.sims.catUtils.mixins.VariabilityMixin as variability
 
 
-__all__ = ['write_star_variability_stats']
+__all__ = ['write_star_variability_stats', 'merge_dbs']
 
 
 class VariabilityGenerator(variability.StellarVariabilityModels,
@@ -151,3 +151,16 @@ def write_star_variability_stats(stars_db_file, outfile, row_min, row_max,
             num_rows += len(chunk)
             chunk = star_curs.fetchmany(chunk_size)
     star_db.close()
+
+
+def merge_sqlite3_dbs(infiles, outfile):
+    shutil.copy(infiles[0], outfile)
+    with sqlite3.connect(outfile) as conn:
+        for infile in infiles[1:]:
+            conn.execute(f"attach '{infile}' as in_db")
+            for row in conn.execute("""select * from in_db.sqlite_master
+                                       where type='table'"""):
+                combine = f"insert into {row[1]} select * from in_db.{row[1]}"
+                conn.execute(combine)
+            conn.commit()
+            conn.execute("detach database in_db")
