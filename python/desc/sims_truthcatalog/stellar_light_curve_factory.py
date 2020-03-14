@@ -105,8 +105,8 @@ class StellarLightCurveFactory:
                     varParamStr, parallax, ra, decl FROM stars where
                     simobjid={simobjid} limit 1"""
         chunk = list(self.conn.execute(query))
-        foo = VariabilityGenerator(chunk)
-        dmags = foo.applyVariability(foo.varParamStr, expmjd=self.mjds)
+        var_gen = VariabilityGenerator(chunk)
+        dmags = var_gen.applyVariability(var_gen.varParamStr, expmjd=self.mjds)
         # Transpose the columns so that the ordering is star, filter, mjd
         dmags = dmags.transpose([1, 0, 2])
         return {band: _ for band, _ in zip(bands, dmags[0])}

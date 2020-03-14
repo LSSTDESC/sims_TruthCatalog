@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import sqlite3
 import multiprocessing
 import numpy as np
@@ -7,6 +8,9 @@ import pandas as pd
 from lsst.sims.utils import defaultSpecMap
 import lsst.sims.photUtils as sims_photUtils
 import lsst.sims.catUtils.mixins.VariabilityMixin as variability
+
+
+__all__ = ['write_star_variability_stats']
 
 
 class VariabilityGenerator(variability.StellarVariabilityModels,
@@ -80,6 +84,16 @@ class VariabilityGenerator(variability.StellarVariabilityModels,
         raise RuntimeError("\n\nCannot get column %s\n\n" % name)
 
 
+def get_variability_model(varParamStr):
+    if varParamStr == 'None':
+        return 'None'
+    params = json.loads(varParamStr)
+    try:
+        return params['m']
+    except KeyError:
+        return params['varMethodName']
+
+
 def write_star_variability_stats(stars_db_file, outfile, row_min, row_max,
                                  chunk_size=10000):
     # Make sure that the Kepler light curves are loaded into memory
@@ -99,8 +113,9 @@ def write_star_variability_stats(stars_db_file, outfile, row_min, row_max,
     # Create the stellar_variability table.
     table_name = 'stellar_variability'
     cmd = f'''create table if not exists {table_name}
-              (id TEXT, mean_u, mean_g, mean_r, mean_i, mean_z, mean_y,
-               stdev_u, stdev_g, stdev_r, stdev_i, stdev_z, stdev_y)'''
+              (id TEXT, model TEXT, mean_u, mean_g, mean_r,
+               mean_i, mean_z, mean_y, stdev_u, stdev_g,
+               stdev_r, stdev_i, stdev_z, stdev_y)'''
     with sqlite3.connect(outfile) as conn:
         cursor = conn.cursor()
         cursor.execute(cmd)
@@ -120,38 +135,19 @@ def write_star_variability_stats(stars_db_file, outfile, row_min, row_max,
             values = []
             for istar in range(len(dmags)):
                 nbands = len(dmags[istar])
-                row = [str(chunk[istar][0])]
+                model = get_variability_model(var_gen.varParamStr[istar])
+                row = [str(chunk[istar][0]), model]
                 row.extend([np.mean(dmags[istar][iband]) for iband
                             in range(nbands)])
                 row.extend([np.std(dmags[istar][iband]) for iband
                             in range(nbands)])
                 values.append(row)
             cursor.executemany(f'''insert into {table_name} values
-                                   (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                   (?, ?, ?, ?, ?,
+                                    ?, ?, ?, ?, ?,
+                                    ?, ?, ?, ?)''',
                                values)
             conn.commit()
             num_rows += len(chunk)
             chunk = star_curs.fetchmany(chunk_size)
     star_db.close()
-
-
-if __name__ == '__main__':
-    #stars_db_file = 'dc2_stars_healpixel_small.db'
-    stars_db_file = ('/global/projecta/projectdirs/lsst/'
-                     'groups/SSim/DC2/dc2_stellar_healpixel.db')
-    processes = 32
-    num_rows = 20269973
-    chunk_size = 10000
-    row_bounds = list(range(0, num_rows, num_rows//processes))
-    row_bounds.append(num_rows)
-    workers = []
-    with multiprocessing.Pool(processes=processes) as pool:
-        for row_min, row_max in zip(row_bounds[:-1], row_bounds[1:]):
-            outfile = f'star_lc_stats_{row_min:08d}_{row_max:08d}.db'
-            workers.append(pool.apply_async(write_star_variability_stats,
-                                            (stars_db_file, outfile, row_min,
-                                             row_max),
-                                            dict(chunk_size=chunk_size)))
-        pool.close()
-        pool.join()
-        [_.get() for _ in workers]
