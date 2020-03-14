@@ -10,7 +10,7 @@ import lsst.sims.photUtils as sims_photUtils
 import lsst.sims.catUtils.mixins.VariabilityMixin as variability
 
 
-__all__ = ['write_star_variability_stats', 'merge_dbs']
+__all__ = ['write_star_variability_stats', 'merge_sqlite3_dbs']
 
 
 class VariabilityGenerator(variability.StellarVariabilityModels,
