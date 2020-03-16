@@ -261,4 +261,4 @@ class StellarLightCurveFactory:
         # Transpose the columns so that the ordering is star, filter, mjd
         dmags = dmags.transpose([1, 0, 2])
 
-        return dict(zip(bands, dmags[0]))
+        return dict(zip(bands, dmags[0])), var_gen.quiescent_mags
