@@ -17,6 +17,21 @@ __all__ = ['write_star_variability_stats', 'merge_sqlite3_dbs',
            'StellarLightCurveFactory', 'write_star_variability_truth']
 
 
+def run2_extended_bounds(radius=2.1):
+    """
+    Define an expanded DC2 Run 2 RA and Dec ranges to be used to
+    omit (most of) the stars that have not been simulated.  The
+    nominal ranges are increased by +/-2.1 degrees to account for
+    the acceptance cone size used to generate the Run2.2i instance
+    catalogs.
+    """
+    dec_bounds = (-44.33 - radius, -27.25 + radius)
+    cos_dec = np.cos(np.radians(dec_bounds[0]))
+    # For RA bounds, use nominal bounds at dec=-44.33
+    ra_bounds = (49.92 - radius/cos_dec, 73.79 + radius/cos_dec)
+    return ra_bounds, dec_bounds
+
+
 class VariabilityGenerator(variability.StellarVariabilityModels,
                            variability.MLTflaringMixin,
                            variability.ParametrizedLightCurveMixin):
@@ -139,9 +154,14 @@ def write_star_variability_stats(stars_db_file, outfile, row_min, row_max,
 
     # Set up the sqlite3 cursor for the star db.
     star_db = sqlite3.connect(stars_db_file)
-    query = f"""SELECT simobjid, -1, sedFilename, magNorm, ebv,
-                varParamStr, parallax, ra, decl FROM stars
-                limit {row_min}, {row_max - row_min}"""
+    query = """SELECT simobjid, -1, sedFilename, magNorm, ebv,
+               varParamStr, parallax, ra, decl FROM stars """
+    # Apply extended RA, Dec bounds to exclude stars well outside of the
+    # Run 2 region.
+    (ra_min, ra_max), (dec_min, dec_max) = run2_extended_bounds()
+    query += f'''where {ra_min} <= ra and ra <= {ra_max}
+                 and {dec_min} <= decl and decl <= {dec_max} '''
+    query += f'limit {row_min}, {row_max - row_min}'
     star_curs = star_db.execute(query)
 
     # Create the stellar_variability table.
@@ -267,7 +287,7 @@ class StellarLightCurveFactory:
 
 def write_star_variability_truth(outfile, stars_db_file, opsim_db_file,
                                  star_lc_stats_db_file,
-                                 fp_radius=2.05, max_num_stars=None,
+                                 fp_radius=2.05, row_range=None,
                                  dmag_threshold=1e-3):
     """
     Write the variability truth table for stars that show standard
@@ -292,8 +312,9 @@ def write_star_variability_truth(outfile, stars_db_file, opsim_db_file,
         determining if an object is being observed by LSST for the
         purpose of computing a flux entry for the visit to be entered
         in the Variability Truth Table.
-    max_num_stars: int [None]
-        Maximum number of stars to process from the stars_db_file.
+    row_range: (int, int) [None]
+        Minimum and maximum rows to process from the star_lc_stats_db_file.
+        If None, then process all of the rows.
     dmag_threshold: float [1e-3]
         Threshold in magnitudes for computing light curve data for
         a given star.  If the stdev of the delta magnitude values in
@@ -316,12 +337,10 @@ def write_star_variability_truth(outfile, stars_db_file, opsim_db_file,
     query = ('select id, model from stellar_variability where '
              + ' or '.join([f'stdev_{band} > {dmag_threshold}'
                             for band in bands]))
+    if row_range is not None:
+        query += f' limit {row_range[0]}, {row_range[1] - row_range[0]}'
     with sqlite3.connect(star_lc_stats_db_file) as conn:
         variable_stars = dict(conn.execute(query))
-
-    # DC2 Run 2 boundaries
-    ra_bounds = (49.92, 73.79)      # bounds at dec=-44.33
-    dec_bounds = (-44.33, -27.25)
 
     # Create variabilty truth table in the output sqlite3 file.
     table_name = 'stellar_variability_truth'
@@ -335,6 +354,7 @@ def write_star_variability_truth(outfile, stars_db_file, opsim_db_file,
 
     # Loop over stars in the stars_db_file and compute flux points
     # for visits in which they are observed.
+    ra_bounds, dec_bounds = run2_extended_bounds()
     slc_factory = StellarLightCurveFactory(stars_db_file=stars_db_file)
     num_stars = 0
     with sqlite3.connect(stars_db_file) as conn:
@@ -349,8 +369,6 @@ def write_star_variability_truth(outfile, stars_db_file, opsim_db_file,
                     dec_bounds[0] <= dec <= dec_bounds[1]):
                 continue
             num_stars += 1
-            if num_stars > max_num_stars:
-                break
 
             # Find visits with pointing directions within fp_radius of
             # the star, selecting in ra and dec ranges first, then
