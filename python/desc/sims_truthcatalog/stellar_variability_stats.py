@@ -3,8 +3,10 @@ Module to compute statistics of stellar light curves using lsst_sims
 VariabilityMixin code.
 """
 import os
+import sys
 import shutil
 import json
+import multiprocessing
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -14,7 +16,7 @@ import lsst.sims.catUtils.mixins.VariabilityMixin as variability
 
 
 __all__ = ['write_star_variability_stats', 'merge_sqlite3_dbs',
-           'StellarLightCurveFactory', 'write_star_variability_truth']
+           'StellarLightCurveFactory', 'StellarVariabilityTruth']
 
 
 def run2_extended_bounds(radius=2.1):
@@ -257,8 +259,17 @@ class StellarLightCurveFactory:
     def __del__(self):
         self.conn.close()
 
+    def getRaDec(self, simobjid):
+        """
+        Get the RA, Dec for the requested star.
+        """
+        query = f'select ra, decl from stars where simobjid={simobjid} limit 1'
+        return list(self.conn.execute(query))[0]
+
     def create(self, simobjid, mjds=None):
         """
+        Create the light curve for the requested star.
+
         Parameters
         ----------
         simobjid: int
@@ -285,91 +296,130 @@ class StellarLightCurveFactory:
         return dict(zip(bands, dmags[0])), var_gen.quiescent_mags
 
 
-def write_star_variability_truth(outfile, stars_db_file, opsim_db_file,
-                                 star_lc_stats_db_file,
-                                 fp_radius=2.05, row_range=None,
-                                 dmag_threshold=1e-3):
+class StellarVariabilityTruth:
     """
-    Write the variability truth table for stars that show standard
-    deviations in delta magnitudes > dmag_threshold.
-
-    Parameters
-    ----------
-    outfile: str
-        Output sqlite3 file to contain the variability truth table.
-    star_db_file: str
-        Sqlite3 db file containing the information on the properties
-        of each star.
-    opsim_db_file: str
-        The sqlite3 file containing the OpSim Summary table which
-        has the pointing information for each visit.
-    star_lc_stats_db_file: str
-        Sqlite3 db file containing summary statistics for each star
-        in the star_db_file.
-    fp_radius: float [2.05]
-        Effective radius of the focal plane in degrees.  This defines
-        the acceptance cone centered on the pointing direction for
-        determining if an object is being observed by LSST for the
-        purpose of computing a flux entry for the visit to be entered
-        in the Variability Truth Table.
-    row_range: (int, int) [None]
-        Minimum and maximum rows to process from the star_lc_stats_db_file.
-        If None, then process all of the rows.
-    dmag_threshold: float [1e-3]
-        Threshold in magnitudes for computing light curve data for
-        a given star.  If the stdev of the delta magnitude values in
-        any band is above threshold, then the light curvve data are
-        computed.
+    Class to compute star fluxes for visits in which they are observed.
     """
     bands = 'ugrizy'
+    def __init__(self, stars_db_file, opsim_db_file, star_lc_stats_db_file):
+        """
+        Parameters
+        ----------
+        star_db_file: str
+            Sqlite3 db file containing the information on the properties
+            of each star.
+        opsim_db_file: str
+            The sqlite3 file containing the OpSim Summary table which
+            has the pointing information for each visit.
+        star_lc_stats_db_file: str
+            Sqlite3 db file containing summary statistics for each star
+            in the star_db_file.
+        """
+        self.stars_db_file = stars_db_file
+        with sqlite3.connect(opsim_db_file) as conn:
+            self.opsim_db = pd.read_sql('''select obsHistID, descDitheredRA,
+                                           descDitheredDec, filter, expMJD from
+                                           Summary order by expMJD asc''',
+                                        conn)
+            self.opsim_db['ra'] = np.degrees(self.opsim_db['descDitheredRA'])
+            self.opsim_db['dec'] = np.degrees(self.opsim_db['descDitheredDec'])
+        self.star_lc_stats_db_file = star_lc_stats_db_file
 
-    # Read in the needed columns from the opsim_db file and add
-    # ra, dec columns in degrees to enable per-object visit selections.
-    with sqlite3.connect(opsim_db_file) as conn:
-        opsim_db = pd.read_sql('''select obsHistID, descDitheredRA,
-                                  descDitheredDec, filter, expMJD from Summary
-                                  order by expMJD asc''',
-                               conn)
-    opsim_db['ra'] = np.degrees(opsim_db['descDitheredRA'])
-    opsim_db['dec'] = np.degrees(opsim_db['descDitheredDec'])
+    def write_tables(self, outfile_prefix, processes, fp_radius=2.05,
+                     dmag_threshold=1e-3,  num_rows=None):
+        """
+        Parameters
+        ----------
+        outfile_prefix: str
+            Prefix of output files generated for each subprocess.
+        processes: int
+            Number of subprocesses to launch.
+        fp_radius: float [2.05]
+            Effective radius of the focal plane in degrees.  This defines
+            the acceptance cone centered on the pointing direction for
+            determining if an object is being observed by LSST for the
+            purpose of computing a flux entry for the visit to be entered
+            in the Variability Truth Table.
+        dmag_threshold: float [1e-3]
+            Threshold in magnitudes for computing light curve data for
+            a given star.  If the stdev of the delta magnitude values in
+            any band is above threshold, then the light curvve data are
+            computed.
+        num_rows: int [None]
+            Number of rows to process that pass the dmag_threshold cut
+            from the stellar_variability table in the star_lc_stats_db_file.
+            If None, then process all of the rows
+        """
+        conn = sqlite3.connect(self.star_lc_stats_db_file)
+        dmag_condition = ' or '.join([f'stdev_{band} > {dmag_threshold}'
+                                      for band in self.bands])
+        if num_rows is None:
+            row_query = ('select count(*) from stellar_variability where '
+                         + dmag_condition)
+            num_rows = list(conn.execute(row_query))[0][0]
+        query = ('select id, model from stellar_variability where '
+                 + dmag_condition + f' limit 0, {num_rows}')
+        print(query)
+        sys.stdout.flush()
+        chunk_size = num_rows//processes + 1
+        cursor = conn.execute(query)
+        workers = []
+        rows_dispatched = 0
+        with multiprocessing.Pool(processes=processes) as pool:
+            ichunk = 0
+            stars = dict(cursor.fetchmany(chunk_size))
+            while len(stars) > 0:
+                outfile = f'{outfile_prefix}_{ichunk:03d}.db'
+                func = self._process_stars
+                args = (stars, outfile)
+                kwds = dict(fp_radius=fp_radius)
+                workers.append(pool.apply_async(func, args, kwds))
+                rows_dispatched += len(stars)
+                if rows_dispatched >= num_rows:
+                    break
+                stars = dict(cursor.fetchmany(chunk_size))
+                ichunk += 1
+            pool.close()
+            pool.join()
+            _ = [worker.get() for worker in workers]
 
-    # Find the stars with stdev(delta_mag) > dmag_threshold in any band.
-    query = ('select id, model from stellar_variability where '
-             + ' or '.join([f'stdev_{band} > {dmag_threshold}'
-                            for band in bands]))
-    if row_range is not None:
-        query += f' limit {row_range[0]}, {row_range[1] - row_range[0]}'
-    with sqlite3.connect(star_lc_stats_db_file) as conn:
-        variable_stars = dict(conn.execute(query))
+    def _process_stars(self, stars, outfile, fp_radius=2.05):
+        """
+        Write the variability truth table for stars that show standard
+        deviations in delta magnitudes > dmag_threshold.
 
-    # Create variabilty truth table in the output sqlite3 file.
-    table_name = 'stellar_variability_truth'
-    cmd = f'''create table if not exists {table_name}
-              (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
-               delta_flux FLOAT)'''
-    output = sqlite3.connect(outfile)
-    cursor = output.cursor()
-    cursor.execute(cmd)
-    output.commit()
+        Parameters
+        ----------
+        stars: list-like
+            List of ids for stars in self.star_db_file for which to
+            compute light curves.
+        outfile: str
+            Output sqlite3 file to contain the variability truth table.
+        fp_radius: float [2.05]
+            Effective radius of the focal plane in degrees.  This defines
+            the acceptance cone centered on the pointing direction for
+            determining if an object is being observed by LSST for the
+            purpose of computing a flux entry for the visit to be entered
+            in the Variability Truth Table.
+        """
+        slc_factory = StellarLightCurveFactory(self.stars_db_file)
+        # Create variabilty truth table in the output sqlite3 file.
+        table_name = 'stellar_variability_truth'
+        cmd = f'''create table if not exists {table_name}
+                  (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
+                   delta_flux FLOAT)'''
+        output = sqlite3.connect(outfile)
+        cursor = output.cursor()
+        cursor.execute(cmd)
+        output.commit()
 
-    # Loop over stars in the stars_db_file and compute flux points
-    # for visits in which they are observed.
-    ra_bounds, dec_bounds = run2_extended_bounds()
-    slc_factory = StellarLightCurveFactory(stars_db_file=stars_db_file)
-    num_stars = 0
-    with sqlite3.connect(stars_db_file) as conn:
-        for star_id in variable_stars:
-            # Get the RA, Dec of the current star.
-            query = f'''select ra, decl from stars where
-                        simobjid={star_id} limit 1'''
-            ra, dec = list(conn.execute(query))[0]
-
-            # Rough cut to skip stars not within the Run 2 boundaries.
-            if not (ra_bounds[0] <= ra <= ra_bounds[1] and
-                    dec_bounds[0] <= dec <= dec_bounds[1]):
-                continue
-            num_stars += 1
-
+        # Loop over stars in the stars_db_file and compute flux points
+        # for visits in which they are observed.
+        chunk_size = 500
+        num_stars = len(stars)
+        values = []
+        for istar, star_id in enumerate(stars):
+            ra, dec = slc_factory.getRaDec(star_id)
             # Find visits with pointing directions within fp_radius of
             # the star, selecting in ra and dec ranges first, then
             # calculating and selecting on the angular separations.
@@ -378,7 +428,7 @@ def write_star_variability_truth(outfile, stars_db_file, opsim_db_file,
             ra_min, ra_max = (ra - fp_radius/cos_dec, ra + fp_radius/cos_dec)
             query = (f'{dec_min} <= dec <= {dec_max} and '
                      + f'{ra_min} <= ra <= {ra_max}')
-            df = pd.DataFrame(opsim_db.query(query))
+            df = pd.DataFrame(self.opsim_db.query(query))
             df['ang_sep'] = angularSeparation(
                 df['ra'].to_numpy(), df['dec'].to_numpy(), ra, dec)
             visits = df.query(f'ang_sep < {fp_radius}')
@@ -394,16 +444,17 @@ def write_star_variability_truth(outfile, stars_db_file, opsim_db_file,
             # Compute the delta flux values in nano-Janskys.
             dm, m0 = slc_factory.create(star_id, mjds)
             dfluxes = dict()
-            for band in bands:
+            for band in self.bands:
                 dfluxes[band] = (10.**((8.9 - (m0[band] + dm[band]))/2.5)
                                  - 10.**((8.9 - m0[band])/2.5))*1e9
 
-            # Write the rows to the output table.
-            values = []
             for i, band in enumerate(bps):
                 values.append((star_id, int(obsHistIDs[i]), mjds[i], band,
                                dfluxes[band][i]))
-            cursor.executemany(f'''INSERT INTO {table_name} VALUES
-                                   (?, ?, ?, ?, ?)''', values)
-            output.commit()
+            if istar % chunk_size == 0 or istar == (num_stars - 1):
+                # Write the rows to the output table.
+                cursor.executemany(f'''INSERT INTO {table_name} VALUES
+                                    (?, ?, ?, ?, ?)''', values)
+                output.commit()
+                values = []
         output.close()
