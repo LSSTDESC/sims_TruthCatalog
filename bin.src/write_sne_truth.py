@@ -52,6 +52,6 @@ if args.variable_table:
                                    max_rows=args.row_limit,
                                    max_parallel=args.max_parallel,
                                    verbose=args.verbose)
-    print('{}   Wrote variability table', dt.now().strftime(time_fmt))
+    print('{}   Wrote variability table'.format(dt.now().strftime(time_fmt)))
 
 print('{}   write_sne_truth done'.format(dt.now().strftime(time_fmt)))

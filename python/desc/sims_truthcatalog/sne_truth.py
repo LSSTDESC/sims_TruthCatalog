@@ -11,6 +11,7 @@ from lsst.sims.photUtils import BandpassDict
 from lsst.sims.utils import angularSeparation
 from .synthetic_photometry import SyntheticPhotometry
 from .write_sqlite import write_sqlite
+from .script_utils import print_date as print_date
 
 
 __all__ = ['SNeTruthWriter', 'SNSynthPhotFactory']
@@ -120,6 +121,10 @@ def _process_chunk(db_lock, outfile, sne_db_file, sne_db_query, opsim_df,
 
     for iloc in range(len(sne_df)):
         row = sne_df.iloc[iloc]
+        if iloc % 10000 == 0:
+            print('Process {} is on its {} object having id {}'.format(process_num, iloc,
+                                                                       row.snid_in))
+            print_date()
         params = {_: row[f'{_}_in'] for _ in
                   'z t0 x0 x1 c snra sndec'.split()}
         sp_factory = SNSynthPhotFactory(**params)
@@ -154,8 +159,10 @@ def _process_chunk(db_lock, outfile, sne_db_file, sne_db_query, opsim_df,
         with sqlite3.connect(outfile) as out_conn:
             cursor = out_conn.cursor()
         
-            if not db_lock.acquire(timeout=60.0):
-                print('Process {} failed to acquire output lock'.format(i_p))
+            if not db_lock.acquire(timeout=300.0):
+                print('Process {} failed to acquire output lock for id {}'.format(process_num. row.snid_in))
+                print('id {} is #{} out of {} for this chunk'.format(row.snid_in, iloc, len(sne_df)))
+                print_date()
                 exit(1)
 
             cursor.executemany(f'''INSERT INTO {table_name} VALUES (?,?,?,?,?)''', values)
