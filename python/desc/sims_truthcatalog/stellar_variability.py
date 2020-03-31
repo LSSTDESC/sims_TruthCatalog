@@ -6,6 +6,7 @@ import os
 import sys
 import shutil
 import json
+from collections import defaultdict
 import multiprocessing
 import sqlite3
 import numpy as np
@@ -295,6 +296,31 @@ class StellarLightCurveFactory:
 
         return dict(zip(bands, dmags[0])), var_gen.quiescent_mags
 
+    def star_fluxes(self, ids, mjd):
+        """
+        Compute the fluxes for a list of ids the specified MJD value.
+
+        Parameters
+        ----------
+        ids: list-like
+             List of simobjids from the star_db_file.
+        mjd: float
+             MJD of the time at which to compute the fluxes for each
+             star.
+
+        Returns
+        -------
+        dict(dict): Dictionary, keyed by simobjid, of dictionary of
+            flux values in nJy, keyed by `ugrizy` band.
+        """
+        fluxes = defaultdict(dict)
+        for obj_id in ids:
+            dm, m0 = self.create(obj_id, [mjd])
+            for band in dm:
+                fluxes[obj_id][band] \
+                    = 10.**((8.9 - (m0[band] + dm[band]))/2.5)*1e9
+        return fluxes
+
 
 class StellarVariabilityTruth:
     """
@@ -326,7 +352,7 @@ class StellarVariabilityTruth:
         self.star_lc_stats_db_file = star_lc_stats_db_file
 
     def write_tables(self, outfile_prefix, processes, fp_radius=2.05,
-                     dmag_threshold=1e-3,  num_rows=None):
+                     dmag_threshold=1e-3, num_rows=None):
         """
         Parameters
         ----------
