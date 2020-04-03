@@ -2,9 +2,11 @@
 Module to write truth catalogs for SNe using the SNe parameters db as input.
 """
 import os
+import re
 import sqlite3
 import numpy as np
 import pandas as pd
+import warnings
 from multiprocessing import Process, Lock
 from yaml import load as yload
 from yaml import FullLoader
@@ -14,10 +16,12 @@ from lsst.sims.photUtils import BandpassDict
 from lsst.sims.utils import angularSeparation
 from .synthetic_photometry import SyntheticPhotometry
 from .write_sqlite import write_sqlite
+from .sqlite_utils import merge_sqlite3_dbs
 from .script_utils import print_date as print_date
 
 
-__all__ = ['SNeTruthWriter', 'SNSynthPhotFactory', 'get_chunk_intervals']
+__all__ = ['SNeTruthWriter', 'SNSynthPhotFactory', 'get_chunk_intervals',
+           'sne_create_var_index', 'sne_merge_var']
 
 
 # For use in parallelizing variability table
@@ -109,7 +113,7 @@ def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
     # table_name should perhaps be yet another argument
     table_name = 'sn_variability_truth'
     
-    if dry_run:
+    if dry_run:           
         print('Dry run: "finish" chunk {}'.format(process_num), file=lg)
         return
 
@@ -417,10 +421,67 @@ class SNeTruthWriter:
         for p in p_list:
             p.join()
 
-        # and then merge process output files into one
+def sne_create_var_index(db_file):
+    with sqlite3.connect(db_file) as conn:
+        conn.cursor().execute('create index snid_ix on sn_variability_truth(id)')
+        conn.commit()
 
-        # Finally, index to make look-up of light curves faster
-        #if not self.dry_run:
-        #    with sqlite3.connect(self.outfile) as conn:
-        #        conn.cursor().execute('create index snid_ix on sn_variability_truth(id)')
-        #        conn.commit()
+def sne_merge_var(outfile, in_dir, in_pattern):
+    '''
+    Merge collection into outfile
+    Parameters
+    ----------
+    outfile:  May or may not already exist.  May or may not already have
+              variability table.  If so, schema had better match.
+              Also assuming all infiles have the same schema
+    in_dir:   dbs to be merged are in this directory
+    in_pattern:  regular expresssion. Matches files we need from the directory
+                 Note:  it has to be a full match
+
+    Return
+    ------
+    True if merge was done; else False
+    '''
+
+    # Get collection of input files
+    dir_contents = os.listdir(in_dir)
+    infiles = []
+    for f in dir_contents:
+        if re.fullmatch(in_pattern, f):
+            infiles.append(os.path.join(in_dir,f))
+
+    if len(infiles) == 0:
+        warnings.warn('No matching files to merge')
+        return False
+
+    if not os.path.exists(outfile):
+        merge_sqlite3_dbs(infiles, outfile)
+        return  True
+
+    out_dir = os.path.dirname(outfile)
+    tmp_merge = os.path.join(out_dir,'merge_sqlite3_dbs.db_tmp' )
+    while os.path.exists(tmp_merge):
+        tmp_merge += '_tmp'
+    merge_sqlite3_dbs(infiles, tmp_merge)
+
+    # get table definition
+    tbl = 'sn_variability_truth'
+    with sqlite3.connect(tmp_merge) as conn:
+        c = conn.cursor()
+        c.execute(f"select sql from sqlite_master where name='{tbl}'")
+        sch = c.fetchone()[0][len('CREATE TABLE'):]
+
+    create_string = 'CREATE TABLE IF NOT EXISTS ' + sch
+    with sqlite3.connect(outfile) as conn:
+        conn.execute(create_string)
+        conn.execute(f"attach '{tmp_merge}' as in_db")
+        conn.execute(f"insert into {tbl} select * from in_db.{tbl}")
+        conn.commit()
+        conn.execute("detach database in_db")
+    os.remove(tmp_merge)
+    
+    return True
+        
+        
+
+           
