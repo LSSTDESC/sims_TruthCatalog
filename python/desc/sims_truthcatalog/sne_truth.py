@@ -2,6 +2,7 @@
 Module to write truth catalogs for SNe using the SNe parameters db as input.
 """
 import os
+import sys
 import re
 import sqlite3
 import numpy as np
@@ -105,16 +106,18 @@ def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
     '''
     Compute and write out variability for a manageable chunk of SNe
     '''
-    lg = open(logfile, 'w')
-    print("_process_chunk called for process #{} ".format(process_num),
-          file=lg)
-    print("query_string: \n{}".format(sne_db_query), file=lg)
+    if logfile is not None:
+        lg = open(logfile, 'w')
+    else:
+        lg = sys.stdout
+    print(f"_process_chunk called for process #{process_num} ", file=lg)
+    print(f"query_string: \n{sne_db_query}", file=lg)
 
     # table_name should perhaps be yet another argument
     table_name = 'sn_variability_truth'
     
     if dry_run:           
-        print('Dry run: "finish" chunk {}'.format(process_num), file=lg)
+        print(f'Dry run: "finish" chunk {process_num}', file=lg)
         return
 
     # Create the Variability Truth table.
@@ -131,8 +134,7 @@ def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
     with sqlite3.connect(sne_db_file) as read_conn:
         sne_df = pd.read_sql(sne_db_query, read_conn)
     if verbose:
-        print("Process {} has  {} sne".format(process_num, len(sne_df)),
-              file=lg)
+        print(f"Process {process_num} has  {len(sen_df)} sne", file=lg)
 
     # Loop over rows in the SN database and add the flux for
     # each observation where the SN is observed by LSST.
@@ -141,9 +143,7 @@ def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
     for iloc in range(len(sne_df)):
         row = sne_df.iloc[iloc]
         if iloc % 10000 == 0:
-            print('Process {} is on its {} object having id {}'.format(process_num,
-                                                                       iloc,
-                                                                       row.snid_in),
+            print(f'Process {process_num} is on its {iloc} object having id {row.snid_in}',
                   file=lg)
             print_date(file=lg)
         params = {_: row[f'{_}_in'] for _ in
@@ -174,7 +174,7 @@ def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
                            synth_phot.calcFlux(band)))
         if len(values) == 0:
             if (verbose):
-                print("Process {}: no rows found for id {}".format(process_num, row.snid_in), file=lg)                
+                print(f"Process {process_num}: no rows found for id {row.snid_in}", file=lg)                
             continue
 
         with sqlite3.connect(outfile) as out_conn:
@@ -184,13 +184,11 @@ def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
         
         num_rows += len(values)
         if verbose:
-            print('Process {} inserting {} rows for id {} '.format(process_num,
-                                                                   len(values),
-                                                                   row.snid_in),
+            print(f'Process {process_num} inserting {len(values)} rows for id {row.snid_in} ',
                   file=lg)
         if max_rows is not None and num_rows > max_rows:
             break
-    print('Done with chunk {}'.format(process_num), file=lg)
+    print(f'Done with chunk {process_num}', file=lg)
 
 def _get_chunk_intervals(fpath, max_chunks):
     '''
@@ -240,7 +238,6 @@ def _get_chunk_intervals(fpath, max_chunks):
             continue
         # split
         to_split = int(min(remaining + 1, np.ceil(lens[i]/mcs)))
-        #print('lens[i] is {}; to_split is {}'.format(lens[i], to_split))
         add_for_end = int(np.ceil(lens[i]/to_split)) - 1
         start = int(intervals[i][0])
         for k in range(to_split):
@@ -251,9 +248,10 @@ def _get_chunk_intervals(fpath, max_chunks):
 
     return ret_intervals
 
-# Temporarily public version for debugging
+# Public version for debugging
 def get_chunk_intervals(fpath, max_chunks):
     return _get_chunk_intervals(fpath, max_chunks)
+
 
 class SNeTruthWriter:
     '''
@@ -344,7 +342,8 @@ class SNeTruthWriter:
                                    VALUES (?,?,?,?,?,?,?,?,?)''', values)
             conn.commit()
 
-    def write_variability_truth(self, opsim_db_file, chunk_log, fp_radius=2.05,
+    def write_variability_truth(self, opsim_db_file, chunk_log=None,
+                                fp_radius=2.05,
                                 max_rows=None, max_parallel=1, verbose=False,
                                 interval_file=None):
         """
@@ -360,6 +359,7 @@ class SNeTruthWriter:
             File(s) where per-chunk output is written.  If '+' is not in the
             string a '+' will be appended.  Then, for each process handling
             a chunk, replace '+' with the process number and log to that path.
+            If None write to standard output
         fp_radius: float [2.05]
             Effective radius of the focal plane in degrees.  This defines
             the acceptance cone centered on the pointing direction for
@@ -386,13 +386,11 @@ class SNeTruthWriter:
                    expMJD from Summary''', conn)
         opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
         opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
-
         _opsim_df = opsim_df
-
-
         p_list = []
 
-        if not '+' in chunk_log: chunk_log += '+'
+        if chunk_log is not None:
+            if not '+' in chunk_log: chunk_log += '+'
 
         # Same query as before except don't need galaxy_id and include conditions on rowid
         q = 'select c_in, t0_in, x0_in, x1_in, z_in, snid_in, snra_in, sndec_in from sne_params '
@@ -405,13 +403,19 @@ class SNeTruthWriter:
         for i_p in range(n_proc):
             if interval_file is not None:
                 # compose row_cut using interval information
-                row_cut = 'where rowid >= {} and rowid <= {} order by rowid'.format(intervals[i_p][0], intervals[i_p][1])
+                row_cut = f'where rowid >= {intervals[i_p][0]} and rowid <= {intervals[i_p][1]} order by rowid'
             else:
-                row_cut = 'where rowid > {} and rowid <= {} order by rowid'.format(i_p*self.per_process, (i_p+1)*self.per_process)
+                row_cut = f'where rowid > {i_p*self.per_process} and rowid <= {(i_p+1)*self.per_process} order by rowid'
             i_query = q + row_cut
-            i_out = '{}_{}'.format(self.outfile, i_p)
-            i_log = chunk_log.replace('+', str(i_p))
-            p = Process(target=_process_chunk, name='proc_{}'.format(i_p),
+
+            if chunk_log is None:
+                i_out = self.outfile
+                i_log = None
+            else:
+                i_out = f'{self.outfile}_{i_p}'
+                i_log = chunk_log.replace('+', str(i_p))
+                
+            p = Process(target=_process_chunk, name=f'proc{i_p}',
                         args=(i_out, i_log, self.sne_db_file, i_query, _opsim_df,
                               fp_radius, i_p, max_rows, self.dry_run,
                               verbose))

@@ -54,7 +54,7 @@ if args.variable_table:
     opsim_db_dir = '/global/projecta/projectdirs/lsst/groups/SSim/DC2'
     writer.write_variability_truth(os.path.join(opsim_db_dir, 
                                                 'minion_1016_desc_dithered_v4_sfd.db'),
-                                   args.chunk_log,
+                                   chunk_log=args.chunk_log,
                                    max_rows=args.row_limit,
                                    max_parallel=args.max_parallel,
                                    interval_file = args.interval_file,
