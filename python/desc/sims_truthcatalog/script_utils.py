@@ -26,14 +26,14 @@ def print_callinfo(prog, args):
 
     sys.stdout.flush()
 
-def print_date(to_second=True):
+def print_date(to_second=True, file=None):
     """
     Print current time (by default only to nearest second) and flush output
+    Print to file if supplied, else to std.out
     """
     if to_second:
-        print(dt.now().strftime(TIME_TO_SECOND_FMT))
+        print(dt.now().strftime(TIME_TO_SECOND_FMT), file=file, flush=True)
     else:
-        print(dt.nou())
+        print(dt.now(), file=file, flush=True)
 
-    sys.stdout.flush()
     

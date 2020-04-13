@@ -1,9 +1,10 @@
 
 from datetime import datetime as dt
+import shutil
 import os
 import sqlite3
 
-__all__ = ["write_column_descriptions"]
+__all__ = ["write_column_descriptions", "merge_sqlite3_dbs"]
 
 def write_column_descriptions(conn):
     cursor = conn.cursor()
@@ -56,3 +57,27 @@ def write_column_descriptions(conn):
                        (rowdat[i][0], rowdat[i][1], rowdat[i][2]))
         conn.commit()
 
+
+def merge_sqlite3_dbs(infiles, outfile):
+    """
+    Function to merge the db tables in a list of input sqlite3 files.
+    The corresponding tables in each file are assumed to have the same
+    schemas.
+
+    Parameters
+    ----------
+    infiles: list-like
+        List of sqlite3 filenames.
+    outfile: str
+        Filename of output sqlite3 file to contain the merged tables.
+    """
+    shutil.copy(infiles[0], outfile)
+    with sqlite3.connect(outfile) as conn:
+        for infile in infiles[1:]:
+            conn.execute(f"attach '{infile}' as in_db")
+            for row in conn.execute("""select * from in_db.sqlite_master
+                                       where type='table'"""):
+                combine = f"insert into {row[1]} select * from in_db.{row[1]}"
+                conn.execute(combine)
+            conn.commit()
+            conn.execute("detach database in_db")

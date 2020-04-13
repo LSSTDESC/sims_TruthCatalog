@@ -1,0 +1,27 @@
+intervals :
+  -
+     start : 18746
+     end :   21008
+  -
+     start : 40089
+     end :   42016
+  -
+     start : 209240
+     end :   210080
+  -
+     start : 230023
+     end :   231088
+  -
+     start : 356779
+     end :   357138
+  -
+     start : 377950
+     end :   378144
+  -
+     start : 462111
+     end :   462176
+  -
+     start : 546175
+     end :   546208
+
+max_chunk_size : 600

@@ -4,3 +4,4 @@ from .sne_truth import *
 from .star_truth import *
 from .agn_truth import *
 from .synthetic_photometry import *
+from .stellar_variability import *
