@@ -16,7 +16,7 @@ import lsst.sims.photUtils as sims_photUtils
 import lsst.sims.catUtils.mixins.VariabilityMixin as variability
 
 
-__all__ = ['write_star_variability_stats', 'merge_sqlite3_dbs',
+__all__ = ['write_star_variability_stats',
            'StellarLightCurveFactory', 'StellarVariabilityTruth']
 
 
@@ -206,31 +206,6 @@ def write_star_variability_stats(stars_db_file, outfile, row_min, row_max,
             num_rows += len(chunk)
             chunk = star_curs.fetchmany(chunk_size)
     star_db.close()
-
-
-def merge_sqlite3_dbs(infiles, outfile):
-    """
-    Function to merge the db tables in a list of input sqlite3 files.
-    The corresponding tables in each file are assumed to have the same
-    schemas.
-
-    Parameters
-    ----------
-    infiles: list-like
-        List of sqlite3 filenames.
-    outfile: str
-        Filename of output sqlite3 file to contain the merged tables.
-    """
-    shutil.copy(infiles[0], outfile)
-    with sqlite3.connect(outfile) as conn:
-        for infile in infiles[1:]:
-            conn.execute(f"attach '{infile}' as in_db")
-            for row in conn.execute("""select * from in_db.sqlite_master
-                                       where type='table'"""):
-                combine = f"insert into {row[1]} select * from in_db.{row[1]}"
-                conn.execute(combine)
-            conn.commit()
-            conn.execute("detach database in_db")
 
 
 class StellarLightCurveFactory:
