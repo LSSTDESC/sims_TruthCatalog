@@ -162,7 +162,7 @@ class SyntheticPhotometry:
         self.sed.multiplyFluxNorm(fnorm)
 
         if self.iAv != 0:
-            self.add_dust(self.sed, self.iAv, self.iRv, 'intrinsic')
+            self.add_dust(self.iAv, self.iRv, 'intrinsic')
         if self.redshift != 0:
             self.sed.redshiftSED(self.redshift, dimming=True)
         self.sed.resampleSED(wavelen_match=self.bp_dict.wavelenMatch)
