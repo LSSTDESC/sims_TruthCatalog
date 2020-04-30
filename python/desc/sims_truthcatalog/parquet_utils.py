@@ -65,14 +65,17 @@ def convert_sqlite_to_parquet(dbfile, pqfile, table,
         meta_res = cursor.execute('PRAGMA table_info({})'.format(table))
         column_dict = {t[1]: t[2] for t in meta_res.fetchall()}
 
-        type_translate = {'BIGINT' : 'int64', 'INT' : 'int32', 'FLOAT' : 'float32',
-                          'DOUBLE' : 'float64', 'TEXT' : 'string'}
+        type_translate = {'BIGINT' : 'int64', 'INT' : 'int32', 'INTEGER' : 'int32',
+                          'FLOAT' : 'float32', 'DOUBLE' : 'float64', 'TEXT' : 'string'}
         type_pa = {'int64' : pa.int64(), 'int32' : pa.int32(),
                    'float32': pa.float32(), 'float64' : pa.float64(), 'string' : pa.string()}
 
         for (k,v) in column_dict.items():
             if v in type_translate.keys():
                 column_dict[k] = type_translate[v]
+            else:
+                print(f"For key {k} found unknown type {v}, setting to float32")
+                column_dict[k] = 'float32'
 
         print('column_dict: ')
         for (k, v) in column_dict.items():
@@ -88,24 +91,36 @@ def convert_sqlite_to_parquet(dbfile, pqfile, table,
         done = False
 
         # Fetch the sqlite data
-        cmd = 'select * from ' + table
-        if order_by is not None:
-            cmd += ' order by ' + order_by
 
-        print('\nFetch command is:\n', cmd)
+        prev_row = 0
+        limit_row = min(row_per_group, total_row)
+
+        writer = pq.ParquetWriter(pqfile, schema)
+
+        while limit_row <= total_row:
+            cmd = f"select * from {table} where rowid > {prev_row} and rowid <= {limit_row}"
             
-        cursor.execute(cmd)
+            if order_by is not None:
+                cmd += ' order by ' + order_by
 
-        with pq.ParquetWriter(pqfile, schema) as writer:
-            while not done:
-                records =  cursor.fetchmany(row_per_group)
-                if len(records) == 0:
-                    done = True
-                    break
-                to_write = _transpose(records, column_dict, schema)
-                writer.write_table(to_write)
-                if len(records) < row_per_group:
-                    done = true
+            print('\nFetch command is:\n', cmd)
+            
+            cursor.execute(cmd)
+
+            #with pq.ParquetWriter(pqfile, schema) as writer:
+            #    #while not done:
+            #    #records =  cursor.fetchmany(row_per_group)
+            records =  cursor.fetchall()
+            if len(records) == 0:
+                done = True
+                break
+            to_write = _transpose(records, column_dict, schema)
+            writer.write_table(to_write)
+            if len(records) < row_per_group:
+                done = True
+                break
+            prev_row = limit_row
+            limit_row = min(prev_row + row_per_group, total_row)
     print('Conversion successful')                   #  ***DEBUG***
         
 def compare_sqlite_parquet(sqlite_file, parquet_file, sqlite_table, id_column=None, n_rows=100,
@@ -240,7 +255,7 @@ if __name__ == "__main__":
     if not args.check:
         convert_sqlite_to_parquet(args.dbfile, args.pqfile, args.table,
                                   n_group=args.n_group,
-                                  max_group_gbyte=args.max_group_gbyte, order_by = 'id')
+                                  max_group_gbyte=args.max_group_gbyte, order_by = 'rowid')
     else:
         ok = compare_sqlite_parquet(args.dbfile, args.pqfile, args.table, args.id_column,
                                     args.n_check)
