@@ -8,7 +8,7 @@ from lsst.sims.utils import angularSeparation
 from .sne_truth import SNSynthPhotFactory
 
 
-__all__ = ['write_lensed_sn_variability_truth']
+__all__ = ['write_lensed_sn_truth_summary', 'write_lensed_sn_variability_truth']
 
 
 def write_lensed_sn_truth_summary(lensed_sne_truth_cat, outfile):
