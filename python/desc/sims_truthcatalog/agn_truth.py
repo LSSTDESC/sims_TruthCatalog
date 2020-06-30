@@ -216,7 +216,8 @@ class AGNTruthWriter:
                                         ?, ?, ?, ?, ?, ?)''', values)
                 conn.commit()
 
-    def write_variability_truth(self, opsim_db_file, fp_radius=2.05,
+    def write_variability_truth(self, opsim_db_file, start_mjd=59580.,
+                                end_mjd=61395, fp_radius=2.05,
                                 max_rows=None, verbose=False):
         """
         Write the AGN fluxes for each visit.
@@ -226,6 +227,13 @@ class AGNTruthWriter:
         opsim_db_file: str
             The sqlite3 file containing the OpSim Summary table which
             has the pointing information for each visit.
+        start_mjd: float [59580.]
+            Starting MJD for the visits to be used from the opsim db file.
+            The default is the start date of the minion 1016 db file.
+        end_mjd: float [61395.]
+            Ending MJD for the visits to be used from the opsim db file.
+            The default is the end of 5 years from the start date of the
+            minion 1016 db file.
         fp_radius: float [2.05]
             Effective radius of the focal plane in degrees.  This defines
             the acceptance cone centered on the pointing direction for
@@ -234,16 +242,17 @@ class AGNTruthWriter:
             in the Variability Truth Table.
         max_rows: int [None]
             Threshold number of rows to write to the table.  This is useful
-            for testing.  If None, then write all entries for all SNe in
-            the sne_db_file.
+            for testing.  If None, then write all entries for all AGNs in
+            the agn_db_file.
         """
         bands = 'ugrizy'
 
         # Retrieve the pointing information for each visit from the opsim db.
         with sqlite3.connect(opsim_db_file) as conn:
             opsim_df = pd.read_sql(
-                '''select obsHistID, descDitheredRA, descDitheredDec, filter,
-                   expMJD from Summary''', conn)
+                f'''select obsHistID, descDitheredRA, descDitheredDec, filter,
+                expMJD from Summary where expMJD >= {start_mjd} and
+                expMJD <= {end_mjd}''', conn)
         opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
         opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
 
