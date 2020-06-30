@@ -1,8 +1,12 @@
+"""
+Module to compute truth catalog values for lensed hosts in DC2 Run3.0i.
+"""
 import os
 import glob
 from collections import defaultdict
 import sqlite3
 from astropy.io import fits
+import numpy as np
 import pandas as pd
 from .synthetic_photometry import find_sed_file, SyntheticPhotometry
 from .write_sqlite import write_sqlite
@@ -70,12 +74,13 @@ def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
         extinction, and a dict of (ra, dec, redshift) tuples, all keyed
         by object id.
     """
-    band_fluxes = lambda : {band:0 for band in bands}
+    band_fluxes = lambda: {band:0 for band in bands}
     fluxes = defaultdict(band_fluxes)
     fluxes_noMW = defaultdict(band_fluxes)
     coords = dict()
+    mag_norms = dict()
     with sqlite3.connect(host_truth_db_file) as conn:
-        for host_type in ('agn', 'sne'):
+        for host_type in host_types:
             df = pd.read_sql(f'select * from {host_type}_hosts', conn)
             for component in components:
                 mag_norms[component] = get_mag_norms(host_type, component,
@@ -108,7 +113,8 @@ def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
     return dict(fluxes), dict(fluxes_noMW), coords
 
 
-def write_lensed_host_truth(host_truth_db_file, image_dir, outfile):
+def write_lensed_host_truth(host_truth_db_file, image_dir, outfile,
+                            bands='ugrizy'):
     """
     Write the truth_summary fluxes for the lensed hosts.
 
@@ -120,6 +126,8 @@ def write_lensed_host_truth(host_truth_db_file, image_dir, outfile):
         Directory containing the FITS stamps.
     outfile: str
         Filename of output sqlite3 file.
+    bands: str or list-like ['ugrizy']
+        Bands for which to return magnorms.
     """
     fluxes, fluxes_noMW, coords = get_lensed_host_fluxes(host_truth_db_file,
                                                          image_dir)

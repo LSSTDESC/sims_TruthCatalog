@@ -1,7 +1,6 @@
 """
 Module to write truth tables for lensed SNe in DC2 Run3.0i.
 """
-import os
 import sqlite3
 import numpy as np
 import pandas as pd
