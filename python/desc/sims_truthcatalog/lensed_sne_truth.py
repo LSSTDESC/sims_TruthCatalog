@@ -12,6 +12,45 @@ from .sne_truth import SNSynthPhotFactory
 __all__ = ['write_lensed_sn_variability_truth']
 
 
+def write_lensed_sn_truth_summary(lensed_sne_truth_cat, outfile):
+    """
+    Write the truth_summary table for the lensed SNe.
+
+    Parameters
+    ----------
+    lensed_sne_truth_cat: str
+        The sqlite3 file containing the model parameters for the lensed SNe.
+    outfile: str
+        Filename of the output sqlite3 file.
+    """
+    table_name = 'truth_summary'
+    create_table_sql = f'''CREATE TABLE IF NOT EXISTS {table_name}
+        (id TEXT, host_galaxy BIGINT, ra DOUBLE, dec DOUBLE,
+        redshift FLOAT, is_variable INT, is_pointsource INT,
+        flux_u FLOAT, flux_g FLOAT, flux_r FLOAT,
+        flux_i FLOAT, flux_z FLOAT, flux_y FLOAT,
+        flux_u_noMW FLOAT, flux_g_noMW FLOAT, flux_r_noMW FLOAT,
+        flux_i_noMW FLOAT, flux_z_noMW FLOAT, flux_y_noMW FLOAT)'''
+    with sqlite3.connect(lensed_sne_truth_cat) as conn, \
+         sqlite3.connect(outfile) as output:
+        # Create the output table if it does not exist.
+        output.cursor().execute(create_table_sql)
+        output.commit()
+        # Query for the columns containing the model info for each SN
+        # from the lensed_sne table.
+        query = '''select unique_id, ra, dec, redshift from lensed_sne'''
+        cursor = conn.execute(query)
+        # Loop over each object and write its fluxes for all relevant
+        # visits to the output table.
+        values = []
+        for unique_id, ra, dec, z in cursor:
+            values.append((unique_id, -1, ra, dec, z, 1, 1,
+                           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,))
+        output.cursor().executemany(f'''insert into {table_name} values
+                                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                     ?, ?, ?, ?, ?, ?, ?, ?, ?)''', values)
+
+
 def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
                                       outfile, fp_radius=2.05):
     """
@@ -54,14 +93,12 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
         # Query for the columns containing the model info for each SN
         # from the lensed_sne table.
         query = '''select unique_id, ra, dec, redshift, t_delay,
-                   magnification, t0, x0, x1, c, av_mw, rv_mw,
-                   lens_cat_sys_id from lensed_sne'''
+                   magnification, t0, x0, x1, c from lensed_sne'''
         cursor = conn.execute(query)
         # Loop over each object and write its fluxes for all relevant
         # visits to the output table.
         for row in cursor:
-            (unique_id, ra, dec, z, t_delay, magnification, t0, x0, x1,
-             c, av, rv, lens_cat_sys_id) = row
+            unique_id, ra, dec, z, t_delay, magnification, t0, x0, x1, c = row
             sp_factory = SNSynthPhotFactory(z=z, t0=t0, x0=x0, x1=x1, c=c,
                                             snra=ra, sndec=dec)
             # Find the opsim db entries corresponding to the time span
@@ -81,7 +118,7 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
             for visit, band, mjd in zip(df['obsHistID'], df['filter'],
                                         df['expMJD']):
                 synth_phot = sp_factory.create(mjd)
-                values.append((unique_id, visit, mjd, band,
-                               synth_phot.calcFlux(band)))
+                flux = magnification*synth_phot.calcFlux(band)
+                values.append((unique_id, visit, mjd, band, flux))
             output.cursor().executemany(f'''insert into {table_name} values
                                             (?,?,?,?,?)''', values)

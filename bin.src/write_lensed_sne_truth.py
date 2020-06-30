@@ -16,8 +16,7 @@ parser.add_argument('--outfile', type=str,
                     default='lensed_sne_truth_cat.db')
 args = parser.parse_args()
 
+stc.write_lensed_sn_truth_summary(args.lensed_sne_truth_cat, args.outfile)
+
 stc.write_lensed_sn_variability(args.opsim_db_file, args.lensed_sne_truth_cat,
                                 args.outfile)
-
-
-
