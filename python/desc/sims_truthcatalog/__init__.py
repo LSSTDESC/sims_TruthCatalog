@@ -7,3 +7,4 @@ from .synthetic_photometry import *
 from .stellar_variability import *
 from .lensed_host_truth import *
 from .lensed_sne_truth import *
+from .lensed_agn_truth import *
