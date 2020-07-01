@@ -103,8 +103,8 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
             # Find the opsim db entries corresponding to the time span
             # when the SN is active and which are within fp_radius
             # degrees of the SN position.
-            tmin, tmax = (sp_factory.mintime() - t_delay,
-                          sp_factory.maxtime() - t_delay)
+            tmin, tmax = (sp_factory.mintime() + t_delay,
+                          sp_factory.maxtime() + t_delay)
             dmin, dmax = dec - fp_radius, dec + fp_radius
             df = pd.DataFrame(opsim_df.query(f'{tmin} <= expMJD <= {tmax} and '
                                              f'{dmin} <= dec <= {dmax}'))
@@ -116,7 +116,7 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
             values = []
             for visit, band, mjd in zip(df['obsHistID'], df['filter'],
                                         df['expMJD']):
-                synth_phot = sp_factory.create(mjd)
+                synth_phot = sp_factory.create(mjd - t_delay)
                 flux = magnification*synth_phot.calcFlux(band)
                 values.append((unique_id, visit, mjd, band, flux))
             output.cursor().executemany(f'''insert into {table_name} values
