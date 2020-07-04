@@ -1,10 +1,12 @@
 """
 Module to write truth tables for lensed AGNs in DC2 Run3.0i.
 """
+import sys
 from collections import namedtuple
 import sqlite3
 import numpy as np
 import pandas as pd
+from lsst.sims.photUtils import PhotometricParameters
 from lsst.sims.utils import angularSeparation
 from .synthetic_photometry import find_sed_file, SyntheticPhotometry
 from .agn_truth import agn_mag_norms
@@ -15,7 +17,7 @@ __all__ = ['write_lensed_agn_truth_summary',
 
 
 def write_lensed_agn_truth_summary(lensed_agn_truth_cat, outfile,
-                                   bands='ugrizy'):
+                                   bands='ugrizy', verbose=False):
     """
     Write the truth_summary table for the lensed AGNs.
 
@@ -27,6 +29,8 @@ def write_lensed_agn_truth_summary(lensed_agn_truth_cat, outfile,
         Filename of the output sqlite3 file.
     bands: list-like ['ugrizy']
         LSST bands.
+    verbose: bool [False]
+        Verbosity flag.  This flag has no effect in this function.
     """
     table_name = 'truth_summary'
     create_table_sql = f'''CREATE TABLE IF NOT EXISTS {table_name}
@@ -67,7 +71,11 @@ def write_lensed_agn_truth_summary(lensed_agn_truth_cat, outfile,
 
 def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
                                        outfile, fp_radius=2.05, bands='ugrizy',
-                                       start_date=58350.):
+                                       start_mjd=59580.,
+                                       end_mjd=61395.,
+                                       agn_walk_start_date=58350.,
+                                       verbose=False,
+                                       num_objects=None):
     """
     Write the lensed AGN fluxes to the lensed_agn_variabilty_truth table.
 
@@ -85,46 +93,68 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
         LSST focalplane projected onto the sky.
     bands: list-like or string ['ugrizy']
         The LSST bands.
-    start_date: float [58350.]
+    start_mjd: float [59580.]
+        Starting MJD for opsim db query.  The default is the nominal starting
+        date for DC2.
+    end_mjd: float [61395.]
+        Ending MJD for opsim db query. The default is the end of year 5.
+        Starting date for visits to process.
+    agn_walk_start_date: float [58350.]
         The starting MJD for AGN light curves.  This starts 240 days
         earlier than the nominal minion 1016 start date to accommodate
         AGN time delays.  It must match the value set at https://github.com/LSSTDESC/SLSprinkler/blob/v1.0.0/scripts/dc2/dc2_utils/variability.py#L22
+    verbose: bool [False]
+        Verbosity flag.
+    num_objects: int [None]
+        Maximum number of objects from the input catalog to process.
+        If None, then process all objects.
+    mjd_max: float [61395]
     """
     table_name = 'lensed_agn_variability_truth'
     create_table_sql = f'''create table if not exists {table_name}
                            (id TEXT, obsHistID INT, MJD FLOAT, bandpass TEXT,
-                            delta_flux FLOAT)'''
+                            delta_flux FLOAT, num_photons FLOAT)'''
     sed_file = find_sed_file('agnSED/agn.spec.gz')
     # Read the opsim db data into a dataframe.
     with sqlite3.connect(opsim_db_file) as conn:
         opsim_df = pd.read_sql(
-            '''select obsHistID, descDitheredRA, descDitheredDec,
-               expMJD, filter from Summary''', conn)
+            f'''select obsHistID, descDitheredRA, descDitheredDec,
+                expMJD, filter from Summary where expMJD >= {start_mjd}
+                and expMJD < {end_mjd}''', conn)
     opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
     opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
 
     # Loop over objects in the truth_cat containing the model
     # parameters and write the fluxes to the output table for the
     # relevant visits.
+    par_table_name = 'lensed_agn'
     colnames = (['unique_id', 'ra', 'dec', 'redshift', 't_delay', 'magnorm',
                  'magnification', 'seed']
                 + [f'agn_tau_{_}' for _ in bands]
                 + [f'agn_sf_{_}' for _ in bands]
                 + ['av_mw', 'rv_mw'])
-    query = f'select {",".join(colnames)} from lensed_agn'
+    query = f'select {",".join(colnames)} from {par_table_name}'
     AGNParams = namedtuple('AGNParams', colnames)
     with sqlite3.connect(lensed_agn_truth_cat) as conn, \
          sqlite3.connect(outfile) as output:
         # Create the output table if it does not exist.
         output.cursor().execute(create_table_sql)
         output.commit()
+        # Get the number of AGN entries in the input db file.
+        cursor = conn.execute(f'select count(*) from {par_table_name}')
+        nobjs = list(cursor)[0][0]
+        if num_objects is None:
+            num_objects = nobjs
         # Query for the columns containing the model info for each AGN
         # from the lensed_agn table.
         cursor = conn.execute(query)
         # Loop over each object and write its fluxes for all relevant
         # visits to the output table.
-        for row in cursor:
+        for i, row in zip(range(num_objects), cursor):
             pars = AGNParams(*row)._asdict()
+            if verbose:
+                print(pars['unique_id'], i, num_objects)
+                sys.stdout.flush()
             decmin, decmax = pars['dec'] - fp_radius, pars['dec'] + fp_radius
             df = pd.DataFrame(opsim_df.query(f'{decmin} <= dec <= {decmax}'))
             df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
@@ -134,31 +164,36 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
             if len(df) == 0:
                 continue
             # Compute baseline fluxes in each band.
-            synth_phot0 = SyntheticPhotometry(sed_file, pars['mag_norm'],
+            synth_phot0 = SyntheticPhotometry(sed_file, pars['magnorm'],
                                               redshift=pars['redshift'],
                                               iAv=0, gAv=pars['av_mw'],
-                                              gRv=pars['gv_mw'])
+                                              gRv=pars['rv_mw'])
             flux0 = {_: synth_phot0.calcFlux(_) for _ in bands}
             values = []
             for band in bands:
+                phot_params = PhotometricParameters(nexp=1, exptime=30, gain=1,
+                                                    bandpass=band)
+                bp = synth_phot0.bp_dict[band]
                 my_df = df.query(f'filter == "{band}"')
                 mjds = my_df['expMJD'].to_numpy() - pars['t_delay']
-                mag_norms = (agn_mag_norms(my_df['expMJD'],
+                mag_norms = (agn_mag_norms(mjds,
                                            pars['redshift'],
                                            pars[f'agn_tau_{band}'],
                                            pars[f'agn_sf_{band}'],
                                            pars['seed'],
-                                           start_date=start_date)
-                             + pars['mag_norm'])
-                for visit, mjd, mag_norm in zip(my_df['visit'], my_df['expMJD'],
-                                                mag_norms):
+                                           start_date=agn_walk_start_date)
+                             + pars['magnorm'])
+                for visit, mjd, mag_norm in zip(my_df['obsHistID'],
+                                                my_df['expMJD'], mag_norms):
                     synth_phot = SyntheticPhotometry(sed_file, mag_norm,
                                                      redshift=pars['redshift'],
                                                      iAv=0, gAv=pars['av_mw'],
-                                                     gRv=pars['gv_mw'])
+                                                     gRv=pars['rv_mw'])
                     delta_flux = (pars['magnification']*
                                   (synth_phot.calcFlux(band) - flux0[band]))
+                    num_photons = (pars['magnification']
+                                   *synth_phot.sed.calcADU(bp, phot_params))
                     values.append((pars['unique_id'], visit, mjd, band,
-                                   delta_flux))
+                                   delta_flux, num_photons))
             output.cursor().executemany(f'''insert into {table_name} values
-                                            (?, ?, ?, ?, ?)''', values)
+                                            (?, ?, ?, ?, ?, ?)''', values)

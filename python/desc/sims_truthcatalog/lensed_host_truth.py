@@ -2,14 +2,16 @@
 Module to compute truth catalog values for lensed hosts in DC2 Run3.0i.
 """
 import os
+import sys
 import glob
 from collections import defaultdict
 import sqlite3
 from astropy.io import fits
 import numpy as np
 import pandas as pd
+from lsst.sims.photUtils import PhotometricParameters
 from .synthetic_photometry import find_sed_file, SyntheticPhotometry
-from .write_sqlite import write_sqlite
+from .sqlite_utils import write_column_descriptions
 
 
 __all__ = ['write_lensed_host_truth']
@@ -48,7 +50,7 @@ def get_mag_norms(host_type, component, image_dir, bands='ugrizy'):
 
 def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
                            components=('bulge', 'disk'),
-                           host_types=('agn', 'sne')):
+                           host_types=('agn', 'sne'), verbose=False):
     """
     Loop over entries in `agn_hosts` and `sne_hosts` tables in
     the host_truth_db_file and compute fluxes (with and without MW
@@ -67,6 +69,8 @@ def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
         Galaxy components of lensed hosts.
     host_types: list-like [('agn', 'sne')]
         Types of hosted objects.
+    verbose: bool [False]
+        Verbose flag.
 
     Returns
     -------
@@ -77,6 +81,7 @@ def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
     band_fluxes = lambda: {band:0 for band in bands}
     fluxes = defaultdict(band_fluxes)
     fluxes_noMW = defaultdict(band_fluxes)
+    num_photons = defaultdict(band_fluxes)
     coords = dict()
     mag_norms = dict()
     with sqlite3.connect(host_truth_db_file) as conn:
@@ -86,12 +91,15 @@ def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
                 mag_norms[component] = get_mag_norms(host_type, component,
                                                      image_dir)
             for iloc in range(len(df)):
+                if verbose:
+                    print(host_type, iloc, len(df))
+                    sys.stdout.flush()
                 row = df.iloc[iloc]
                 ra = row['ra_lens']
                 dec = row['dec_lens']
                 redshift = row['redshift']
                 unique_id = str(row['unique_id'])
-                coords[unique_id] = (ra, dec, redshift)
+                coords[unique_id] = [ra, dec, redshift]
                 gAv = row['av_mw']
                 gRv = row['rv_mw']
                 for component in components:
@@ -110,11 +118,16 @@ def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
                             += synth_phot.calcFlux(band)
                         synth_phot.add_dust(gAv, gRv, 'Galactic')
                         fluxes[unique_id][band] += synth_phot.calcFlux(band)
-    return dict(fluxes), dict(fluxes_noMW), coords
+                        bp = synth_phot.bp_dict[band]
+                        photpars = PhotometricParameters(nexp=1, exptime=30,
+                                                         gain=1, bandpass=band)
+                        num_photons[unique_id][band] \
+                            += synth_phot.sed.calcADU(bp, photpars)
+    return dict(fluxes), dict(fluxes_noMW), dict(num_photons), coords
 
 
 def write_lensed_host_truth(host_truth_db_file, image_dir, outfile,
-                            bands='ugrizy'):
+                            bands='ugrizy', verbose=False):
     """
     Write the truth_summary fluxes for the lensed hosts.
 
@@ -128,27 +141,44 @@ def write_lensed_host_truth(host_truth_db_file, image_dir, outfile,
         Filename of output sqlite3 file.
     bands: str or list-like ['ugrizy']
         Bands for which to return magnorms.
+    verbose: bool [False]
+        Verbose flag.
     """
-    fluxes, fluxes_noMW, coords = get_lensed_host_fluxes(host_truth_db_file,
-                                                         image_dir)
+    cmd = '''CREATE TABLE IF NOT EXISTS truth_summary
+        (id TEXT, host_galaxy BIGINT, ra DOUBLE, dec DOUBLE,
+        redshift FLOAT, is_variable INT, is_pointsource INT,
+        flux_u FLOAT, flux_g FLOAT, flux_r FLOAT,
+        flux_i FLOAT, flux_z FLOAT, flux_y FLOAT,
+        flux_u_noMW FLOAT, flux_g_noMW FLOAT, flux_r_noMW FLOAT,
+        flux_i_noMW FLOAT, flux_z_noMW FLOAT, flux_y_noMW FLOAT,
+        num_photons_u FLOAT, num_photons_g FLOAT, num_photons_r FLOAT,
+        num_photons_i FLOAT, num_photons_z FLOAT, num_photons_y FLOAT)'''
+    fluxes, fluxes_noMW, num_photons, coords \
+        = get_lensed_host_fluxes(host_truth_db_file, image_dir, verbose=verbose)
+    host_galaxy = -1
+    is_variable = 0
+    is_pointsource = 0
+    ids = sorted(list(set(fluxes.keys()).intersection(fluxes_noMW.keys())))
+    values = []
+    for unique_id in ids:
+        values.append([unique_id, host_galaxy] + coords[unique_id]
+                      + [is_variable, is_pointsource]
+                      + [fluxes[unique_id][_] for _ in bands]
+                      + [fluxes_noMW[unique_id][_] for _ in bands]
+                      + [num_photons[unique_id][_] for _ in bands])
     if os.path.isfile(outfile):
         raise OSError(f'{outfile} already exists.')
-    ids = sorted(list(set(fluxes.keys()).intersection(fluxes_noMW.keys())))
-    ras, decs, redshifts = [], [], []
-    flux_by_band_MW = {_: [] for _ in bands}
-    flux_by_band_noMW = {_: [] for _ in bands}
-    for unique_id in ids:
-        ra, dec, redshift = coords[unique_id]
-        ra.append(ra)
-        dec.append(dec)
-        redshifts.append(redshift)
-        for band in bands:
-            flux_by_band_MW[band].append(fluxes[unique_id][band])
-            flux_by_band_noMW[band].append(fluxes_noMW[unique_id][band])
-    galaxy_ids = -1*np.ones(len(ids))
-    is_variable = np.zeros(len(ids))
-    is_pointsource = np.zeros(len(ids))
-    good_ixes = range(len(ids))
-    write_sqlite(outfile, ids, galaxy_ids, ras, decs, redshifts,
-                 is_variable, is_pointsource, flux_by_band_MW,
-                 flux_by_band_noMW, good_ixes)
+    with sqlite3.connect(outfile) as conn:
+        write_column_descriptions(conn)
+        cursor = conn.cursor()
+        cursor.execute(cmd)
+        conn.commit()
+        cursor.executemany('INSERT INTO truth_summary '
+                           'VALUES (?,?,?,?,?,?,?,'
+                                   '?,?,?,?,?,?,'
+                                   '?,?,?,?,?,?,'
+                                   '?,?,?,?,?,?)', values)
+        conn.commit()
+        # index to speed up location searches
+        cursor.execute('create index radec_ix on truth_summary(ra, dec)')
+        conn.commit()
