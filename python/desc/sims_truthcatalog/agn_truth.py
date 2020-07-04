@@ -8,6 +8,7 @@ import json
 import sqlite3
 import numpy as np
 import pandas as pd
+from lsst.sims.photUtils import PhotometricParameters
 from lsst.sims.utils import angularSeparation
 from .synthetic_photometry import SyntheticPhotometry, find_sed_file
 from .write_sqlite import write_sqlite
@@ -74,7 +75,8 @@ class AGNTruthWriter:
     Write Summary and Variable truth tables for unlensed AGNs.
     '''
     agn_type_id = 117
-    def __init__(self, outfile, agn_db_file):
+    def __init__(self, outfile, agn_db_file,
+                 ddf_bounds=(52.479, 53.771, -28.667, -27.533)):
         '''
         Parameters
         ----------
@@ -82,15 +84,18 @@ class AGNTruthWriter:
             Name of the sqlite3 file to contain the truth tables.
         agn_db_file: str
             The sqlite3 file containing the AGN model parameters.
+        ddf_bounds: 4-tuple [(52.479, 53.771, -28.667, -27.533)]
+            Bounds of DDF region in degrees.
         '''
         self.outfile = outfile
-        if os.path.isfile(outfile):
-            raise OSError(f'{outfile} already exists.')
         if not os.path.isfile(agn_db_file):
             raise FileNotFoundError(f'{agn_db_file} not found.')
         self.conn = sqlite3.connect(agn_db_file)
-        self.query = '''select galaxy_id, magNorm, redshift, M_i, ra, dec,
-                     varParamStr from agn_params'''
+        ra_min, ra_max, dec_min, dec_max = ddf_bounds
+        self.query = f'''select galaxy_id, magNorm, redshift, M_i, ra, dec,
+                         varParamStr from agn_params where {ra_min} <= ra
+                         and ra <= {ra_max} and {dec_min} <= dec
+                         and dec <= {dec_max} '''
         curs = self.conn.execute(self.query)
         self.icol = {_[0]: icol for icol, _ in enumerate(curs.description)}
 
@@ -123,9 +128,9 @@ class AGNTruthWriter:
             chunk = curs.fetchmany(chunk_size)
             if not chunk:
                 break
+            if verbose:
+                print(irec)
             for row in chunk:
-                if verbose:
-                    print(irec)
                 irec += 1
                 # All AGNs are variable point sources:
                 is_pointsource.append(1)
@@ -198,9 +203,9 @@ class AGNTruthWriter:
                 if not chunk:
                     break
                 values = []
+                if verbose:
+                    print(irec)
                 for row in chunk:
-                    if verbose:
-                        print(irec)
                     irec += 1
                     pars = json.loads(row[self.icol['varParamStr']])['p']
                     my_row = [self.object_id(row[self.icol['galaxy_id']]),
@@ -218,7 +223,7 @@ class AGNTruthWriter:
 
     def write_variability_truth(self, opsim_db_file, start_mjd=59580.,
                                 end_mjd=61395, fp_radius=2.05,
-                                max_rows=None, verbose=False):
+                                num_objects=None, verbose=False):
         """
         Write the AGN fluxes for each visit.
 
@@ -240,8 +245,8 @@ class AGNTruthWriter:
             determining if an object is being observed by LSST for the
             purpose of computing a flux entry for the visit to be entered
             in the Variability Truth Table.
-        max_rows: int [None]
-            Threshold number of rows to write to the table.  This is useful
+        num_objects: int [None]
+            The number of objects to process.  This is useful
             for testing.  If None, then write all entries for all AGNs in
             the agn_db_file.
         """
@@ -256,11 +261,17 @@ class AGNTruthWriter:
         opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
         opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
 
+        # Get the total number of objects from the AGN parameters table.
+        cursor = self.conn.execute(f'select count(*) from agn_params')
+        nobjs = list(cursor)[0][0]
+        if num_objects is None:
+            num_objects = nobjs
+
         # Create the Variability Truth table.
         table_name = 'agn_variability_truth'
         cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
                   (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
-                  delta_flux FLOAT, magNorm FLOAT)'''
+                  delta_flux FLOAT, num_photons FLOAT)'''
         with sqlite3.connect(self.outfile) as conn:
             cursor = conn.cursor()
             cursor.execute(cmd)
@@ -271,10 +282,12 @@ class AGNTruthWriter:
             sed_file = find_sed_file('agnSED/agn.spec.gz')
             agn_db_curs = self.conn.execute(self.query)
             row = agn_db_curs.fetchone()
-            num_rows = 0
+            num_objs = 0
             while row is not None:
                 # Extract the AGN info and model parameters.
                 object_id = self.object_id(row[self.icol['galaxy_id']])
+                if verbose:
+                    print(num_objs, object_id)
                 ra = row[self.icol['ra']]
                 dec = row[self.icol['dec']]
                 magNorm = row[self.icol['magNorm']]
@@ -296,6 +309,9 @@ class AGNTruthWriter:
                 df = df.query(f'ang_sep <= {fp_radius}')
                 # Compute delta fluxes for each band.
                 for band in bands:
+                    phot_params = PhotometricParameters(nexp=1, exptime=30,
+                                                        gain=1, bandpass=band)
+                    bp = synth_phot.bp_dict[band]
                     tau = params[f'agn_tau_{band}']
                     sf = params[f'agn_sf_{band}']
                     my_df = df.query(f'filter == "{band}"')
@@ -312,14 +328,13 @@ class AGNTruthWriter:
                                                          redshift=redshift,
                                                          gAv=gAv, gRv=gRv)
                         delta_flux = synth_phot.calcFlux(band) - flux0[band]
+                        num_photons = synth_phot.sed.calcADU(bp, phot_params)
                         values.append((object_id, obsHistID, mjd, band,
-                                       delta_flux, mag_norm))
+                                       delta_flux, num_photons))
                     cursor.executemany(f'''INSERT INTO {table_name} VALUES
                                            (?, ?, ?, ?, ?, ?)''', values)
                     conn.commit()
-                    num_rows += len(values)
-                    if verbose:
-                        print(num_rows)
-                    if max_rows is not None and num_rows > max_rows:
-                        return
+                num_objs += 1
+                if num_objs == num_objects:
+                    return
                 row = agn_db_curs.fetchone()
