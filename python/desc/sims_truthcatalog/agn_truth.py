@@ -165,7 +165,12 @@ class AGNTruthWriter:
                          is_pointsource=is_pointsource,
                          flux_by_band_MW=flux_by_band_MW,
                          flux_by_band_noMW=flux_by_band_noMW,
-                         good_ixes=range(len(ids)))
+                         good_ixes=range(len(ids)),
+                         create_index=False)
+        with sqlite3.connect(self.outfile) as conn:
+            conn.cursor().execute('create index radec_ix on truth_summary(ra,dec)')
+            conn.commit()
+
 
     def write_auxiliary_truth(self, chunk_size=10000, verbose=False):
         """
