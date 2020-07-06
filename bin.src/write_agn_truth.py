@@ -12,7 +12,7 @@ parser.add_argument('--opsim_db_file', type=str, help='OpSim db file',
                     default=('/global/cfs/cdirs/descssim/DC2/'
                              'minion_1016_desc_dithered_v4_trimmed.db'))
 parser.add_argument('--outfile', type=str, help='output sqlite3 filename',
-                    default='agn_truth.sqlite3')
+                    default='agn_truth_cat.db')
 parser.add_argument('--start_mjd', type=float, default=59580,
                     help=('Starting MJD of variability data. The default is'
                           'the start of the minion_1016 candence.'))

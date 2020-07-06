@@ -16,7 +16,7 @@ parser.add_argument('--image_dir', type=str,
                     default=('/global/cfs/cdirs/descssim/DC2/Run3.0i/'
                              'FITS_stamps'))
 parser.add_argument('--outfile', type=str, help='output sqlite3 filename',
-                    default='lensed_host_truth.db')
+                    default='lensed_host_truth_cat.db')
 parser.add_argument('--verbose', default=False, action='store_true',
                     help='Verbosity flag.')
 parser.add_argument('--overwrite', default=False, action='store_true',
