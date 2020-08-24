@@ -10,7 +10,8 @@ from lsst.sims.utils import angularSeparation
 from .sne_truth import SNSynthPhotFactory
 
 
-__all__ = ['write_lensed_sn_truth_summary', 'write_lensed_sn_variability_truth']
+__all__ = ['write_lensed_sn_truth_summary', 'write_lensed_sn_variability_truth',
+           'write_lensed_sn_light_curves']
 
 
 def write_lensed_sn_truth_summary(lensed_sne_truth_cat, outfile, verbose=False):
@@ -52,6 +53,36 @@ def write_lensed_sn_truth_summary(lensed_sne_truth_cat, outfile, verbose=False):
         output.cursor().executemany(f'''insert into {table_name} values
                                     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                                      ?, ?, ?, ?, ?, ?, ?, ?, ?)''', values)
+
+
+def write_lensed_sn_light_curves(row, output, opsim_df, fp_radius, table_name):
+    unique_id, ra, dec, z, t_delay, magnification, t0, x0, x1, c = row
+    sp_factory = SNSynthPhotFactory(z=z, t0=t0, x0=x0, x1=x1, c=c,
+                                    snra=ra, sndec=dec)
+    # Find the opsim db entries corresponding to the time span
+    # when the SN is active and which are within fp_radius
+    # degrees of the SN position.
+    tmin, tmax = sp_factory.mintime() + t_delay, sp_factory.maxtime() + t_delay
+    dmin, dmax = dec - fp_radius, dec + fp_radius
+    df = pd.DataFrame(opsim_df.query(f'{tmin} <= expMJD <= {tmax} and '
+                                     f'{dmin} <= dec <= {dmax}'))
+    df['ang_sep'] = angularSeparation(df['ra'].to_numpy(), df['dec'].to_numpy(),
+                                      ra, dec)
+    df = df.query(f'ang_sep <= {fp_radius}')
+
+    # Insert the rows into the variability truth table.
+    values = []
+    for visit, band, mjd in zip(df['obsHistID'], df['filter'], df['expMJD']):
+        phot_params = PhotometricParameters(nexp=1, exptime=30, gain=1,
+                                            bandpass=band)
+        synth_phot = sp_factory.create(mjd - t_delay)
+        flux = magnification*synth_phot.calcFlux(band)
+        bp = synth_phot.bp_dict[band]
+        num_photons = magnification*synth_phot.sed.calcADU(bp, phot_params)
+        values.append((unique_id, visit, mjd, band, flux, num_photons))
+        output.cursor().executemany(f'''insert into {table_name} values
+                                        (?,?,?,?,?,?)''', values)
+    output.commit()
 
 
 def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
@@ -113,36 +144,5 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
         # Loop over each object and write its fluxes for all relevant
         # visits to the output table.
         for i, row in zip(range(num_objects), cursor):
-            unique_id, ra, dec, z, t_delay, magnification, t0, x0, x1, c = row
-            if verbose:
-                print(unique_id, i, num_objects)
-                sys.stdout.flush()
-            sp_factory = SNSynthPhotFactory(z=z, t0=t0, x0=x0, x1=x1, c=c,
-                                            snra=ra, sndec=dec)
-            # Find the opsim db entries corresponding to the time span
-            # when the SN is active and which are within fp_radius
-            # degrees of the SN position.
-            tmin, tmax = (sp_factory.mintime() + t_delay,
-                          sp_factory.maxtime() + t_delay)
-            dmin, dmax = dec - fp_radius, dec + fp_radius
-            df = pd.DataFrame(opsim_df.query(f'{tmin} <= expMJD <= {tmax} and '
-                                             f'{dmin} <= dec <= {dmax}'))
-            df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
-                                              df['dec'].to_numpy(), ra, dec)
-            df = df.query(f'ang_sep <= {fp_radius}')
-
-            # Insert the rows into the variability truth table.
-            values = []
-            for visit, band, mjd in zip(df['obsHistID'], df['filter'],
-                                        df['expMJD']):
-                phot_params = PhotometricParameters(nexp=1, exptime=30, gain=1,
-                                                    bandpass=band)
-                synth_phot = sp_factory.create(mjd - t_delay)
-                flux = magnification*synth_phot.calcFlux(band)
-                bp = synth_phot.bp_dict[band]
-                num_photons \
-                    = magnification*synth_phot.sed.calcADU(bp, phot_params)
-                values.append((unique_id, visit, mjd, band, flux, num_photons))
-            output.cursor().executemany(f'''insert into {table_name} values
-                                            (?,?,?,?,?,?)''', values)
-        output.commit()
+            write_lensed_sn_light_curves(row, output, opsim_df, fp_radius,
+                                         table_name)
