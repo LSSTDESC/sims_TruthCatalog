@@ -5,9 +5,9 @@ import os
 import sys
 import glob
 from collections import defaultdict
+import logging
 import sqlite3
 from astropy.io import fits
-import numpy as np
 import pandas as pd
 from lsst.sims.photUtils import PhotometricParameters
 from .synthetic_photometry import find_sed_file, SyntheticPhotometry
@@ -15,6 +15,10 @@ from .sqlite_utils import write_column_descriptions
 
 
 __all__ = ['write_lensed_host_truth']
+
+
+logging.basicConfig(format="%(asctime)s %(name)s: %(message)s",
+                    stream=sys.stdout)
 
 
 def get_mag_norms(host_type, component, image_dir, bands='ugrizy'):
@@ -78,6 +82,11 @@ def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
         extinction, and a dict of (ra, dec, redshift) tuples, all keyed
         by object id.
     """
+    logger = logging.getLogger('get_lensed_host_fluxes')
+    if verbose:
+        logger.setLevel(logging.INFO)
+
+    logger.info('processing %s', host_truth_db_file)
     band_fluxes = lambda: {band:0 for band in bands}
     fluxes = defaultdict(band_fluxes)
     fluxes_noMW = defaultdict(band_fluxes)
@@ -91,9 +100,7 @@ def get_lensed_host_fluxes(host_truth_db_file, image_dir, bands='ugrizy',
                 mag_norms[component] = get_mag_norms(host_type, component,
                                                      image_dir)
             for iloc in range(len(df)):
-                if verbose:
-                    print(host_type, iloc, len(df))
-                    sys.stdout.flush()
+                logger.info('%s  %d  %d', host_type, iloc, len(df))
                 row = df.iloc[iloc]
                 ra = row['ra_lens']
                 dec = row['dec_lens']

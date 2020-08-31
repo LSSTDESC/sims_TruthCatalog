@@ -2,6 +2,7 @@
 Module to write truth tables for lensed SNe in DC2 Run3.0i.
 """
 import sys
+import logging
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -12,6 +13,10 @@ from .sne_truth import SNSynthPhotFactory
 
 __all__ = ['write_lensed_sn_truth_summary', 'write_lensed_sn_variability_truth',
            'write_lensed_sn_light_curves']
+
+
+logging.basicConfig(format="%(asctime)s %(name)s: %(message)s",
+                    stream=sys.stdout)
 
 
 def write_lensed_sn_truth_summary(lensed_sne_truth_cat, outfile, verbose=False):
@@ -27,6 +32,11 @@ def write_lensed_sn_truth_summary(lensed_sne_truth_cat, outfile, verbose=False):
     verbose: bool [False]
         Verbosity flag.  No effect in this function.
     """
+    logger = logging.getLogger('write_lensed_sn_truth_summary')
+    if verbose:
+        logger.setLevel(logging.INFO)
+
+    logger.info('processing %s', lensed_sne_truth_cat)
     table_name = 'truth_summary'
     create_table_sql = f'''CREATE TABLE IF NOT EXISTS {table_name}
         (id TEXT, host_galaxy BIGINT, ra DOUBLE, dec DOUBLE,
@@ -56,6 +66,9 @@ def write_lensed_sn_truth_summary(lensed_sne_truth_cat, outfile, verbose=False):
 
 
 def write_lensed_sn_light_curves(row, output, opsim_df, fp_radius, table_name):
+    """
+    Write the light curve values to the variability table.
+    """
     unique_id, ra, dec, z, t_delay, magnification, t0, x0, x1, c = row
     sp_factory = SNSynthPhotFactory(z=z, t0=t0, x0=x0, x1=x1, c=c,
                                     snra=ra, sndec=dec)
@@ -109,6 +122,11 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
         Maximum number of objects from the input catalog to process.
         If None, then process all objects.
     """
+    logger = logging.getLogger('write_lensed_sn_variability_truth')
+    if verbose:
+        logger.setLevel(logging.INFO)
+
+    logger.info('processing %s', lensed_sne_truth_cat)
     table_name = 'lensed_sn_variability_truth'
     create_table_sql = f'''create table if not exists {table_name}
                            (id TEXT, obsHistID INT, MJD FLOAT, bandpass TEXT,
@@ -144,5 +162,6 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
         # Loop over each object and write its fluxes for all relevant
         # visits to the output table.
         for i, row in zip(range(num_objects), cursor):
+            logger.info('%d  %d', i, num_objects)
             write_lensed_sn_light_curves(row, output, opsim_df, fp_radius,
                                          table_name)

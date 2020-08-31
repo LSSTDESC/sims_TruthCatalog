@@ -2,9 +2,9 @@
 Module to write truth catalogs for AGNs using the AGNs parameters db as input.
 """
 import os
-import math
-from collections import defaultdict
+import sys
 import json
+import logging
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -15,6 +15,10 @@ from .write_sqlite import write_sqlite
 
 
 __all__ = ['AGNTruthWriter', 'agn_mag_norms']
+
+
+logging.basicConfig(format="%(asctime)s %(name)s: %(message)s",
+                    stream=sys.stdout)
 
 
 def agn_mag_norms(mjds, redshift, tau, sf, seed, start_date=58580.):
@@ -117,19 +121,21 @@ class AGNTruthWriter:
         verbose: bool [False]
             Flag to write the number of records that have been processed.
         '''
+        logger = logging.getLogger('AGNTruthWriter.write')
+        if verbose:
+            logger.setLevel(logging.INFO)
         bands = 'ugrizy'
         curs = self.conn.execute(self.query)
         irec = 0
         while True:
             ids, galaxy_ids, ra, dec, redshift = [], [], [], [], []
-            is_variable, is_pointsource, good_ixes = [], [], []
+            is_variable, is_pointsource = [], []
             flux_by_band_MW = {_: [] for _ in bands}
             flux_by_band_noMW = {_: [] for _ in bands}
             chunk = curs.fetchmany(chunk_size)
             if not chunk:
                 break
-            if verbose:
-                print(irec)
+            logger.info('%d', irec)
             for row in chunk:
                 irec += 1
                 # All AGNs are variable point sources:
@@ -184,6 +190,9 @@ class AGNTruthWriter:
         verbose: bool [False]
             Flag to write the number of records that have been processed.
         """
+        logger = logging.getLogger('AGNTruthWriter.write_auxiliary_truth')
+        if verbose:
+            logger.setLevel(logging.INFO)
         bands = 'ugrizy'
         curs = self.conn.execute(self.query)
 
@@ -201,15 +210,11 @@ class AGNTruthWriter:
 
             irec = 0
             while True:
-                ids, host_galaxies, M_is, seeds = [], [], [], []
-                taus = {_: [] for _ in bands}
-                sfs = {_: [] for _ in bands}
                 chunk = curs.fetchmany(chunk_size)
                 if not chunk:
                     break
                 values = []
-                if verbose:
-                    print(irec)
+                logger.info('%d', irec)
                 for row in chunk:
                     irec += 1
                     pars = json.loads(row[self.icol['varParamStr']])['p']
@@ -255,6 +260,9 @@ class AGNTruthWriter:
             for testing.  If None, then write all entries for all AGNs in
             the agn_db_file.
         """
+        logger = logging.getLogger('AGNTruthWriter.write_variability_truth')
+        if verbose:
+            logger.setLevel(logging.INFO)
         bands = 'ugrizy'
 
         # Retrieve the pointing information for each visit from the opsim db.
@@ -291,8 +299,7 @@ class AGNTruthWriter:
             while row is not None:
                 # Extract the AGN info and model parameters.
                 object_id = self.object_id(row[self.icol['galaxy_id']])
-                if verbose:
-                    print(num_objs, object_id)
+                logger.info('%d  %s', num_objs, object_id)
                 ra = row[self.icol['ra']]
                 dec = row[self.icol['dec']]
                 magNorm = row[self.icol['magNorm']]

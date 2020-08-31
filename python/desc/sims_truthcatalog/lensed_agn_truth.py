@@ -3,6 +3,7 @@ Module to write truth tables for lensed AGNs in DC2 Run3.0i.
 """
 import sys
 from collections import namedtuple
+import logging
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -14,6 +15,10 @@ from .agn_truth import agn_mag_norms
 
 __all__ = ['write_lensed_agn_truth_summary',
            'write_lensed_agn_variability_truth']
+
+
+logging.basicConfig(format="%(asctime)s %(name)s: %(message)s",
+                    stream=sys.stdout)
 
 
 def write_lensed_agn_truth_summary(lensed_agn_truth_cat, outfile,
@@ -32,6 +37,11 @@ def write_lensed_agn_truth_summary(lensed_agn_truth_cat, outfile,
     verbose: bool [False]
         Verbosity flag.  This flag has no effect in this function.
     """
+    logger = logging.getLogger('write_lensed_agn_truth_summary')
+    if verbose:
+        logger.setLevel(logging.INFO)
+
+    logger.info('processing %s', lensed_agn_truth_cat)
     table_name = 'truth_summary'
     create_table_sql = f'''CREATE TABLE IF NOT EXISTS {table_name}
         (id TEXT, host_galaxy BIGINT, ra DOUBLE, dec DOUBLE,
@@ -110,6 +120,10 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
         If None, then process all objects.
     mjd_max: float [61395]
     """
+    logger = logging.getLogger('write_lensed_agn_variability_truth')
+    if verbose:
+        logger.setLevel(logging.INFO)
+    logger.info('processing %s', lensed_agn_truth_cat)
     table_name = 'lensed_agn_variability_truth'
     create_table_sql = f'''create table if not exists {table_name}
                            (id TEXT, obsHistID INT, MJD FLOAT, bandpass TEXT,
@@ -152,9 +166,7 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
         # visits to the output table.
         for i, row in zip(range(num_objects), cursor):
             pars = AGNParams(*row)._asdict()
-            if verbose:
-                print(pars['unique_id'], i, num_objects)
-                sys.stdout.flush()
+            logger.info('%s  %d  %d', pars['unique_id'], i, num_objects)
             decmin, decmax = pars['dec'] - fp_radius, pars['dec'] + fp_radius
             df = pd.DataFrame(opsim_df.query(f'{decmin} <= dec <= {decmax}'))
             df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
