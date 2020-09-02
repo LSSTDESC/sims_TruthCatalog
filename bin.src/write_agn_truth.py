@@ -40,8 +40,9 @@ agn_truth_writer.write(verbose=args.verbose)
 
 agn_truth_writer.write_auxiliary_truth(verbose=args.verbose)
 
-agn_truth_writer.write_variability_truth(args.opsim_db_file,
-                                         start_mjd=args.start_mjd,
-                                         end_mjd=args.end_mjd,
-                                         object_range=(0, args.num_objects),
-                                         verbose=args.verbose)
+stc.write_agn_variability_truth(args.agn_db_file, agn_truth_writer.query,
+                                args.opsim_db_file,
+                                start_mjd=args.start_mjd,
+                                end_mjd=args.end_mjd,
+                                object_range=(0, args.num_objects),
+                                verbose=args.verbose)
