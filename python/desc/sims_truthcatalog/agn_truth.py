@@ -14,7 +14,7 @@ from .synthetic_photometry import SyntheticPhotometry, find_sed_file
 from .write_sqlite import write_sqlite
 
 
-__all__ = ['AGNTruthWriter', 'agn_mag_norms']
+__all__ = ['AGNTruthWriter', 'agn_mag_norms', 'write_agn_variability_truth']
 
 
 logging.basicConfig(format="%(asctime)s %(name)s: %(message)s",
@@ -232,123 +232,129 @@ class AGNTruthWriter:
                                         ?, ?, ?, ?, ?, ?)''', values)
                 conn.commit()
 
-    def write_variability_truth(self, opsim_db_file, start_mjd=59580.,
+def write_agn_variability_truth(agn_db_file, query, opsim_db_file,
+                                start_mjd=59580.,
                                 end_mjd=61405, fp_radius=2.05,
                                 object_range=None, outfile=None,
                                 verbose=False):
-        """
-        Write the AGN fluxes for each visit.
+    """
+    Write the AGN fluxes for each visit.
 
-        Parameters
-        ----------
-        opsim_db_file: str
-            The sqlite3 file containing the OpSim Summary table which
-            has the pointing information for each visit.
-        start_mjd: float [59580.]
-            Starting MJD for the visits to be used from the opsim db file.
-            The default is the start date of the minion 1016 db file.
-        end_mjd: float [61405.]
-            Ending MJD for the visits to be used from the opsim db file.
-            The default is the end of 5 years from the start date of the
-            minion 1016 db file.
-        fp_radius: float [2.05]
-            Effective radius of the focal plane in degrees.  This defines
-            the acceptance cone centered on the pointing direction for
-            determining if an object is being observed by LSST for the
-            purpose of computing a flux entry for the visit to be entered
-            in the Variability Truth Table.
-        object_range: (int, int) [None]
-            The range of objects to process.  This is useful for
-            testing.  If None, then write all entries for all AGNs in
-            the agn_db_file.
-        outfile: str [None]
-            Output file for the `agn_variability_truth` table.  If None,
-            then self.outfile will be used.
-        """
-        logger = logging.getLogger('AGNTruthWriter.write_variability_truth')
-        if verbose:
-            logger.setLevel(logging.INFO)
-        bands = 'ugrizy'
+    Parameters
+    ----------
+    agn_db_file: str
+        File containing the AGN model parameters.
+    query: str
+        Query string for the AGN parameters from agn_db_file.
+    opsim_db_file: str
+        The sqlite3 file containing the OpSim Summary table which
+        has the pointing information for each visit.
+    start_mjd: float [59580.]
+        Starting MJD for the visits to be used from the opsim db file.
+        The default is the start date of the minion 1016 db file.
+    end_mjd: float [61405.]
+        Ending MJD for the visits to be used from the opsim db file.
+        The default is the end of 5 years from the start date of the
+        minion 1016 db file.
+    fp_radius: float [2.05]
+        Effective radius of the focal plane in degrees.  This defines
+        the acceptance cone centered on the pointing direction for
+        determining if an object is being observed by LSST for the
+        purpose of computing a flux entry for the visit to be entered
+        in the Variability Truth Table.
+    object_range: (int, int) [None]
+        The range of objects to process.  This is useful for
+        testing.  If None, then write all entries for all AGNs in
+        the agn_db_file.
+    outfile: str [None]
+        Output file for the `agn_variability_truth` table.  If None,
+        then 'agn_variability_truth_cat.db' will be used.
+    """
+    logger = logging.getLogger('write_agn_variability_truth')
+    if verbose:
+        logger.setLevel(logging.INFO)
+    bands = 'ugrizy'
 
-        # Retrieve the pointing information for each visit from the opsim db.
-        with sqlite3.connect(opsim_db_file) as conn:
-            opsim_df = pd.read_sql(
-                f'''select obsHistID, descDitheredRA, descDitheredDec, filter,
-                expMJD from Summary where expMJD >= {start_mjd} and
-                expMJD <= {end_mjd}''', conn)
-        opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
-        opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
+    # Retrieve the pointing information for each visit from the opsim db.
+    with sqlite3.connect(opsim_db_file) as conn:
+        opsim_df = pd.read_sql(
+            f'''select obsHistID, descDitheredRA, descDitheredDec, filter,
+            expMJD from Summary where expMJD >= {start_mjd} and
+            expMJD <= {end_mjd}''', conn)
+    opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
+    opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
 
-        # Read in the AGN parameters table so that ranges of rows
-        # can be easily handled.
-        agn_df = pd.read_sql(self.query, self.conn)
-        if object_range is None:
-            object_range = (0, len(agn_df))
+    # Read in the AGN parameters table so that ranges of rows
+    # can be easily handled.
+    with sqlite3.connect(agn_db_file) as con:
+        agn_df = pd.read_sql(query, con)
+    if object_range is None:
+        object_range = (0, len(agn_df))
 
-        # Create the Variability Truth table.
-        table_name = 'agn_variability_truth'
-        cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
-                  (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
-                  delta_flux FLOAT, num_photons FLOAT)'''
-        if outfile is None:
-            outfile = self.outfile
-        with sqlite3.connect(outfile) as conn:
-            cursor = conn.cursor()
-            cursor.execute(cmd)
-            conn.commit()
+    # Create the Variability Truth table.
+    table_name = 'agn_variability_truth'
+    cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
+              (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
+              delta_flux FLOAT, num_photons FLOAT)'''
+    if outfile is None:
+        outfile = 'agn_variability_truth_cat.db'
+    with sqlite3.connect(outfile) as conn:
+        cursor = conn.cursor()
+        cursor.execute(cmd)
+        conn.commit()
 
-            # Loop over rows in AGN db and add the flux for each
-            # observation where the AGN is observed by LSST.
-            sed_file = find_sed_file('agnSED/agn.spec.gz')
-            for iloc in range(*object_range):
-                row = agn_df.iloc[iloc]
+        # Loop over rows in AGN db and add the flux for each
+        # observation where the AGN is observed by LSST.
+        sed_file = find_sed_file('agnSED/agn.spec.gz')
+        for iloc in range(*object_range):
+            row = agn_df.iloc[iloc]
 
-                # Extract the AGN info and model parameters:
-                object_id = self.object_id(row['galaxy_id'])
-                logger.info('%d  %d', iloc, object_id)
-                ra = row['ra']
-                dec = row['dec']
-                magNorm = row['magNorm']
-                redshift = row['redshift']
-                params = json.loads(row['varParamStr'])['p']
-                seed = params['seed']
+            # Extract the AGN info and model parameters:
+            object_id = AGNTruthWriter.object_id(row['galaxy_id'])
+            logger.info('%d  %s', iloc, object_id)
+            ra = row['ra']
+            dec = row['dec']
+            magNorm = row['magNorm']
+            redshift = row['redshift']
+            params = json.loads(row['varParamStr'])['p']
+            seed = params['seed']
 
-                # Compute baseline fluxes in each band.
-                synth_phot = SyntheticPhotometry(sed_file, magNorm, redshift)
-                gAv, gRv = synth_phot.add_MW_dust(ra, dec)
-                flux0 = {band: synth_phot.calcFlux(band) for band in bands}
+            # Compute baseline fluxes in each band.
+            synth_phot = SyntheticPhotometry(sed_file, magNorm, redshift)
+            gAv, gRv = synth_phot.add_MW_dust(ra, dec)
+            flux0 = {band: synth_phot.calcFlux(band) for band in bands}
 
-                # Select the visits from the opsim db in which the AGN
-                # is observed by applying cuts on the sky coordinates.
-                dec_cut = f'{dec - fp_radius} <= dec <= {dec + fp_radius}'
-                df = pd.DataFrame(opsim_df.query(dec_cut))
-                df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
-                                                  df['dec'].to_numpy(), ra, dec)
-                df = df.query(f'ang_sep <= {fp_radius}')
-                # Compute delta fluxes for each band.
-                for band in bands:
-                    phot_params = PhotometricParameters(nexp=1, exptime=30,
-                                                        gain=1, bandpass=band)
-                    bp = synth_phot.bp_dict[band]
-                    tau = params[f'agn_tau_{band}']
-                    sf = params[f'agn_sf_{band}']
-                    my_df = df.query(f'filter == "{band}"')
-                    if len(my_df) == 0:
-                        continue
-                    obsHistIDs = my_df['obsHistID'].to_list()
-                    mjds = my_df['expMJD'].to_numpy()
-                    mag_norms = (agn_mag_norms(mjds, redshift, tau, sf, seed)
-                                 + magNorm)
-                    values = []
-                    for obsHistID, mjd, mag_norm in zip(obsHistIDs, mjds,
-                                                        mag_norms):
-                        synth_phot = SyntheticPhotometry(sed_file, mag_norm,
-                                                         redshift=redshift,
-                                                         gAv=gAv, gRv=gRv)
-                        delta_flux = synth_phot.calcFlux(band) - flux0[band]
-                        num_photons = synth_phot.sed.calcADU(bp, phot_params)
-                        values.append((object_id, obsHistID, mjd, band,
-                                       delta_flux, num_photons))
-                    cursor.executemany(f'''INSERT INTO {table_name} VALUES
-                                           (?, ?, ?, ?, ?, ?)''', values)
-                    conn.commit()
+            # Select the visits from the opsim db in which the AGN
+            # is observed by applying cuts on the sky coordinates.
+            dec_cut = f'{dec - fp_radius} <= dec <= {dec + fp_radius}'
+            df = pd.DataFrame(opsim_df.query(dec_cut))
+            df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
+                                              df['dec'].to_numpy(), ra, dec)
+            df = df.query(f'ang_sep <= {fp_radius}')
+            # Compute delta fluxes for each band.
+            for band in bands:
+                phot_params = PhotometricParameters(nexp=1, exptime=30,
+                                                    gain=1, bandpass=band)
+                bp = synth_phot.bp_dict[band]
+                tau = params[f'agn_tau_{band}']
+                sf = params[f'agn_sf_{band}']
+                my_df = df.query(f'filter == "{band}"')
+                if len(my_df) == 0:
+                    continue
+                obsHistIDs = my_df['obsHistID'].to_list()
+                mjds = my_df['expMJD'].to_numpy()
+                mag_norms = (agn_mag_norms(mjds, redshift, tau, sf, seed)
+                             + magNorm)
+                values = []
+                for obsHistID, mjd, mag_norm in zip(obsHistIDs, mjds,
+                                                    mag_norms):
+                    synth_phot = SyntheticPhotometry(sed_file, mag_norm,
+                                                     redshift=redshift,
+                                                     gAv=gAv, gRv=gRv)
+                    delta_flux = synth_phot.calcFlux(band) - flux0[band]
+                    num_photons = synth_phot.sed.calcADU(bp, phot_params)
+                    values.append((object_id, obsHistID, mjd, band,
+                                   delta_flux, num_photons))
+                cursor.executemany(f'''INSERT INTO {table_name} VALUES
+                                       (?, ?, ?, ?, ?, ?)''', values)
+                conn.commit()
