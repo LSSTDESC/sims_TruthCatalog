@@ -2,7 +2,6 @@
 Module to write truth tables for lensed AGNs in DC2 Run3.0i.
 """
 import sys
-from collections import namedtuple
 import logging
 import sqlite3
 import numpy as np
@@ -65,6 +64,7 @@ def write_lensed_agn_truth_summary(lensed_agn_truth_cat, outfile,
         # visits to the output table.
         values = []
         for unique_id, ra, dec, z, magnorm, magnification, gAv, gRv in cursor:
+            logger.info('%s', unique_id)
             synth_phot = SyntheticPhotometry(sed_file, magnorm, z)
             row = [unique_id, -1, ra, dec, z, 1, 1]
             fluxes_noMW = {_: synth_phot.calcFlux(_)*magnification
@@ -74,18 +74,20 @@ def write_lensed_agn_truth_summary(lensed_agn_truth_cat, outfile,
                 row.append(synth_phot.calcFlux(band)*magnification)
             for band in bands:
                 row.append(fluxes_noMW[band])
+            values.append(row)
         output.cursor().executemany(f'''insert into {table_name} values
                                     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                                      ?, ?, ?, ?, ?, ?, ?, ?, ?)''', values)
+        output.commit()
 
 
 def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
                                        outfile, fp_radius=2.05, bands='ugrizy',
                                        start_mjd=59580.,
-                                       end_mjd=61395.,
+                                       end_mjd=61405.,
                                        agn_walk_start_date=58350.,
                                        verbose=False,
-                                       num_objects=None):
+                                       object_range=None):
     """
     Write the lensed AGN fluxes to the lensed_agn_variabilty_truth table.
 
@@ -106,7 +108,7 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
     start_mjd: float [59580.]
         Starting MJD for opsim db query.  The default is the nominal starting
         date for DC2.
-    end_mjd: float [61395.]
+    end_mjd: float [61405.]
         Ending MJD for opsim db query. The default is the end of year 5.
         Starting date for visits to process.
     agn_walk_start_date: float [58350.]
@@ -115,10 +117,10 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
         AGN time delays.  It must match the value set at https://github.com/LSSTDESC/SLSprinkler/blob/v1.0.0/scripts/dc2/dc2_utils/variability.py#L22
     verbose: bool [False]
         Verbosity flag.
-    num_objects: int [None]
-        Maximum number of objects from the input catalog to process.
-        If None, then process all objects.
-    mjd_max: float [61395]
+    object_range: (int, int) [None]
+        The range of objects to process.  This is useful for
+        testing.  If None, then write all entries for all AGNs in
+        the agn_db_file.
     """
     logger = logging.getLogger('write_lensed_agn_variability_truth')
     if verbose:
@@ -148,25 +150,21 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
                 + [f'agn_sf_{_}' for _ in bands]
                 + ['av_mw', 'rv_mw'])
     query = f'select {",".join(colnames)} from {par_table_name}'
-    AGNParams = namedtuple('AGNParams', colnames)
-    with sqlite3.connect(lensed_agn_truth_cat) as conn, \
-         sqlite3.connect(outfile) as output:
+
+    # Read AGN model parameters into a data frame.
+    with sqlite3.connect(lensed_agn_truth_cat) as con:
+        agn_df = pd.read_sql(query, con)
+    if object_range is None:
+        object_range = (0, len(agn_df))
+
+    with sqlite3.connect(outfile) as output:
         # Create the output table if it does not exist.
         output.cursor().execute(create_table_sql)
         output.commit()
-        # Get the number of AGN entries in the input db file.
-        cursor = conn.execute(f'select count(*) from {par_table_name}')
-        nobjs = list(cursor)[0][0]
-        if num_objects is None:
-            num_objects = nobjs
-        # Query for the columns containing the model info for each AGN
-        # from the lensed_agn table.
-        cursor = conn.execute(query)
-        # Loop over each object and write its fluxes for all relevant
-        # visits to the output table.
-        for i, row in zip(range(num_objects), cursor):
-            pars = AGNParams(*row)._asdict()
-            logger.info('%s  %d  %d', pars['unique_id'], i, num_objects)
+
+        for iloc in range(*object_range):
+            pars = agn_df.iloc[iloc]
+            logger.info('%s  %d  %d', pars['unique_id'], iloc, object_range[1])
             decmin, decmax = pars['dec'] - fp_radius, pars['dec'] + fp_radius
             df = pd.DataFrame(opsim_df.query(f'{decmin} <= dec <= {decmax}'))
             df['ang_sep'] = angularSeparation(df['ra'].to_numpy(),
@@ -209,3 +207,4 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
                                    delta_flux, num_photons))
             output.cursor().executemany(f'''insert into {table_name} values
                                             (?, ?, ?, ?, ?, ?)''', values)
+            output.commit()

@@ -4,7 +4,7 @@ import argparse
 import desc.sims_truthcatalog as stc
 
 parser = argparse.ArgumentParser(
-    description='Write lensed host truth catalog for Run3.0i')
+    description='Write lensed host truth catalog for Run3.1i')
 parser.add_argument('--host_truth_db_file', type=str,
                     help=('db file containing model parameters for lensed '
                           'AGN and SNe hosts.'),

@@ -174,7 +174,8 @@ class AGNTruthWriter:
                          good_ixes=range(len(ids)),
                          create_index=False)
         with sqlite3.connect(self.outfile) as conn:
-            conn.cursor().execute('create index radec_ix on truth_summary(ra,dec)')
+            conn.cursor().execute('create index radec_ix on '
+                                  'truth_summary(ra,dec)')
             conn.commit()
 
 
@@ -232,8 +233,9 @@ class AGNTruthWriter:
                 conn.commit()
 
     def write_variability_truth(self, opsim_db_file, start_mjd=59580.,
-                                end_mjd=61395, fp_radius=2.05,
-                                num_objects=None, verbose=False):
+                                end_mjd=61405, fp_radius=2.05,
+                                object_range=None, outfile=None,
+                                verbose=False):
         """
         Write the AGN fluxes for each visit.
 
@@ -245,7 +247,7 @@ class AGNTruthWriter:
         start_mjd: float [59580.]
             Starting MJD for the visits to be used from the opsim db file.
             The default is the start date of the minion 1016 db file.
-        end_mjd: float [61395.]
+        end_mjd: float [61405.]
             Ending MJD for the visits to be used from the opsim db file.
             The default is the end of 5 years from the start date of the
             minion 1016 db file.
@@ -255,10 +257,13 @@ class AGNTruthWriter:
             determining if an object is being observed by LSST for the
             purpose of computing a flux entry for the visit to be entered
             in the Variability Truth Table.
-        num_objects: int [None]
-            The number of objects to process.  This is useful
-            for testing.  If None, then write all entries for all AGNs in
+        object_range: (int, int) [None]
+            The range of objects to process.  This is useful for
+            testing.  If None, then write all entries for all AGNs in
             the agn_db_file.
+        outfile: str [None]
+            Output file for the `agn_variability_truth` table.  If None,
+            then self.outfile will be used.
         """
         logger = logging.getLogger('AGNTruthWriter.write_variability_truth')
         if verbose:
@@ -274,18 +279,20 @@ class AGNTruthWriter:
         opsim_df['ra'] = np.degrees(opsim_df['descDitheredRA'])
         opsim_df['dec'] = np.degrees(opsim_df['descDitheredDec'])
 
-        # Get the total number of objects from the AGN parameters table.
-        cursor = self.conn.execute(f'select count(*) from agn_params')
-        nobjs = list(cursor)[0][0]
-        if num_objects is None:
-            num_objects = nobjs
+        # Read in the AGN parameters table so that ranges of rows
+        # can be easily handled.
+        agn_df = pd.read_sql(self.query, self.conn)
+        if object_range is None:
+            object_range = (0, len(agn_df))
 
         # Create the Variability Truth table.
         table_name = 'agn_variability_truth'
         cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
                   (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
                   delta_flux FLOAT, num_photons FLOAT)'''
-        with sqlite3.connect(self.outfile) as conn:
+        if outfile is None:
+            outfile = self.outfile
+        with sqlite3.connect(outfile) as conn:
             cursor = conn.cursor()
             cursor.execute(cmd)
             conn.commit()
@@ -293,18 +300,17 @@ class AGNTruthWriter:
             # Loop over rows in AGN db and add the flux for each
             # observation where the AGN is observed by LSST.
             sed_file = find_sed_file('agnSED/agn.spec.gz')
-            agn_db_curs = self.conn.execute(self.query)
-            row = agn_db_curs.fetchone()
-            num_objs = 0
-            while row is not None:
-                # Extract the AGN info and model parameters.
-                object_id = self.object_id(row[self.icol['galaxy_id']])
-                logger.info('%d  %s', num_objs, object_id)
-                ra = row[self.icol['ra']]
-                dec = row[self.icol['dec']]
-                magNorm = row[self.icol['magNorm']]
-                redshift = row[self.icol['redshift']]
-                params = json.loads(row[self.icol['varParamStr']])['p']
+            for iloc in range(*object_range):
+                row = agn_df.iloc[iloc]
+
+                # Extract the AGN info and model parameters:
+                object_id = self.object_id(row['galaxy_id'])
+                logger.info('%d  %d', iloc, object_id)
+                ra = row['ra']
+                dec = row['dec']
+                magNorm = row['magNorm']
+                redshift = row['redshift']
+                params = json.loads(row['varParamStr'])['p']
                 seed = params['seed']
 
                 # Compute baseline fluxes in each band.
@@ -346,7 +352,3 @@ class AGNTruthWriter:
                     cursor.executemany(f'''INSERT INTO {table_name} VALUES
                                            (?, ?, ?, ?, ?, ?)''', values)
                     conn.commit()
-                num_objs += 1
-                if num_objs == num_objects:
-                    return
-                row = agn_db_curs.fetchone()

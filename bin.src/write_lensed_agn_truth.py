@@ -4,7 +4,7 @@ import argparse
 import desc.sims_truthcatalog as stc
 
 parser = argparse.ArgumentParser(
-    description='Write truth tables for lensed AGNs for Run3.0i')
+    description='Write truth tables for lensed AGNs for Run3.1i')
 parser.add_argument('--opsim_db_file', type=str, help='OpSim db file for DC2',
                     default=('/global/cfs/cdirs/descssim/DC2/'
                              'minion_1016_desc_dithered_v4_trimmed.db'))
@@ -18,7 +18,7 @@ parser.add_argument('--outfile', type=str,
 parser.add_argument('--start_mjd', type=float, default=59580,
                     help=('Starting MJD of variability data. The default is'
                           'the start of the minion_1016 candence.'))
-parser.add_argument('--end_mjd', type=float, default=61395,
+parser.add_argument('--end_mjd', type=float, default=61405,
                     help=('Ending MJD of variability data.  The default is '
                           'the end of Y05 of the minion_1016 cadence.'))
 parser.add_argument('--verbose', default=False, action='store_true',
@@ -45,4 +45,4 @@ stc.write_lensed_agn_variability_truth(args.opsim_db_file,
                                        start_mjd=args.start_mjd,
                                        end_mjd=args.end_mjd,
                                        verbose=args.verbose,
-                                       num_objects=args.num_objects)
+                                       object_range=(0, args.num_objects))

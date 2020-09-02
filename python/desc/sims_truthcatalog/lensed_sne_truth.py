@@ -63,9 +63,11 @@ def write_lensed_sn_truth_summary(lensed_sne_truth_cat, outfile, verbose=False):
         output.cursor().executemany(f'''insert into {table_name} values
                                     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                                      ?, ?, ?, ?, ?, ?, ?, ?, ?)''', values)
+        output.commit()
 
 
-def write_lensed_sn_light_curves(row, output, opsim_df, fp_radius, table_name):
+def write_lensed_sn_light_curves(row, output, opsim_df, fp_radius, table_name,
+                                 start_mjd=59580., end_mjd=61405):
     """
     Write the light curve values to the variability table.
     """
@@ -76,9 +78,13 @@ def write_lensed_sn_light_curves(row, output, opsim_df, fp_radius, table_name):
     # when the SN is active and which are within fp_radius
     # degrees of the SN position.
     tmin, tmax = sp_factory.mintime() + t_delay, sp_factory.maxtime() + t_delay
+    tmin = max(start_mjd, tmin)
+    tmax = min(end_mjd, tmax)
     dmin, dmax = dec - fp_radius, dec + fp_radius
     df = pd.DataFrame(opsim_df.query(f'{tmin} <= expMJD <= {tmax} and '
                                      f'{dmin} <= dec <= {dmax}'))
+    if len(df) == 0:
+        return
     df['ang_sep'] = angularSeparation(df['ra'].to_numpy(), df['dec'].to_numpy(),
                                       ra, dec)
     df = df.query(f'ang_sep <= {fp_radius}')
@@ -93,14 +99,15 @@ def write_lensed_sn_light_curves(row, output, opsim_df, fp_radius, table_name):
         bp = synth_phot.bp_dict[band]
         num_photons = magnification*synth_phot.sed.calcADU(bp, phot_params)
         values.append((unique_id, visit, mjd, band, flux, num_photons))
-        output.cursor().executemany(f'''insert into {table_name} values
-                                        (?,?,?,?,?,?)''', values)
+    output.cursor().executemany(f'''insert into {table_name} values
+                                    (?,?,?,?,?,?)''', values)
     output.commit()
 
 
 def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
                                       outfile, fp_radius=2.05, verbose=False,
-                                      num_objects=None):
+                                      num_objects=None, start_mjd=59580.,
+                                      end_mjd=61405.):
     """
     Write the lensed SNe fluxes to the lensed_sn_variabilty_truth table.
 
@@ -164,4 +171,5 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
         for i, row in zip(range(num_objects), cursor):
             logger.info('%d  %d', i, num_objects)
             write_lensed_sn_light_curves(row, output, opsim_df, fp_radius,
-                                         table_name)
+                                         table_name, start_mjd=start_mjd,
+                                         end_mjd=end_mjd)
