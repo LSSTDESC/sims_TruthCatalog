@@ -9,7 +9,8 @@ __all__ = ['write_sqlite']
 
 
 def write_sqlite(dbfile, ids, galaxy_ids, ra, dec, redshift, is_variable,
-                 is_pointsource, flux_by_band_MW, flux_by_band_noMW, good_ixes):
+                 is_pointsource, flux_by_band_MW, flux_by_band_noMW, good_ixes,
+                 create_index=True):
     """
     Write the truth_summary table.
     """
@@ -43,6 +44,7 @@ def write_sqlite(dbfile, ids, galaxy_ids, ra, dec, redshift, is_variable,
                            values)
         conn.commit()
 
-        # index to speed up location searches
-        cursor.execute('create index radec_ix on truth_summary(ra,dec)')
-        conn.commit()
+        if create_index:
+            # index to speed up location searches
+            cursor.execute('create index radec_ix on truth_summary(ra,dec)')
+            conn.commit()
