@@ -10,7 +10,7 @@ import sqlite3
 from desc.sims_truthcatalog.script_utils import print_callinfo
 
 __all__ = ["convert_sqlite_to_parquet", "compare_sqlite_parquet"]
-def  _transpose(records, column_dict, schema, n_rec=None):
+def  _transpose(records, column_dict, schema, n_rec=None, verbose=False):
     '''
     return data as list of columns
     '''
@@ -23,33 +23,38 @@ def  _transpose(records, column_dict, schema, n_rec=None):
         for i in range(ic):
             dat[i].append(records[ir][i])
 
-    print("Type of data ", type(dat))
-    print("len of data ", len(dat))
-    for c in dat:
-        print("An item: ", c[0], " its type: ", type(c[0]))
-    print(data_dict['id'][0])
+    if verbose:
+        print("Type of data ", type(dat))
+        print("len of data ", len(dat))
+        for c in dat:
+            print("An item: ", c[0], " its type: ", type(c[0]))
+        print(data_dict['id'][0])
 
     return pa.Table.from_arrays(dat, schema=schema)
 
 def convert_sqlite_to_parquet(dbfile, pqfile, table,
-                              n_group=None, max_group_gbyte=1.0, order_by = None):
+                              n_group=1, max_group_gbyte=5.0,
+                              order_by=None, dry=False, verbose=False ):
     '''
     Write a parquet file corresponding to contents of a table from an sqlite3 db.
 
     Parameters:
-    dbfile          input sqlite3 
+    dbfile          input sqlite3
     pqfile          path for output file
     table           write contents of this table to parquet
-    n_group         # of row groups to write in output parquet file. If not 
+    n_group         # of row groups to write in output parquet file. If not
                     specified, use max_group_gbyte to determine workable value
     max_group_gbyte maximum size for a row group.  Will write more row groups
                     than specified by ngroup if need be.
+    order_by        if supplied, use in SELECT from sqlite
+    dry             if true, produce no output parquet file
+    verbose         if true, include more information in output log
     '''
 
     statinfo = os.stat(dbfile)
-    min_groups = np.ceil(statinfo.st_size / (float(max_group_gbyte) * 10e9))
-    ng = min_groups
-    if n_group is not None: ng = max(min_groups, n_group)
+    min_groups = np.ceil(statinfo.st_size / (float(max_group_gbyte) * 1e9))
+
+    ng = max(min_groups, n_group)
 
     column_dict = {}
     with sqlite3.connect(dbfile) as conn:
@@ -61,22 +66,29 @@ def convert_sqlite_to_parquet(dbfile, pqfile, table,
         if ng > 1:
             row_per_group = int(np.ceil(total_row/float(ng)))
 
+        print(f'Rows per group: {row_per_group}\nN groups: {ng}')
+
         # Get names, types
         meta_res = cursor.execute('PRAGMA table_info({})'.format(table))
         column_dict = {t[1]: t[2] for t in meta_res.fetchall()}
 
-        type_translate = {'BIGINT' : 'int64', 'INT' : 'int32', 'FLOAT' : 'float32',
-                          'DOUBLE' : 'float64', 'TEXT' : 'string'}
+        type_translate = {'BIGINT' : 'int64', 'INT' : 'int32', 'INTEGER' : 'int32',
+                          'FLOAT' : 'float32', 'DOUBLE' : 'float64', 'TEXT' : 'string'}
         type_pa = {'int64' : pa.int64(), 'int32' : pa.int32(),
                    'float32': pa.float32(), 'float64' : pa.float64(), 'string' : pa.string()}
 
         for (k,v) in column_dict.items():
             if v in type_translate.keys():
                 column_dict[k] = type_translate[v]
+            else:
+                print(f"For key {k} found unknown type {v}, setting to float32")
+                column_dict[k] = 'float32'
 
-        print('column_dict: ')
-        for (k, v) in column_dict.items():
-            print(k, " : ", v, " : ")
+        if verbose:
+            print('column_dict: ')
+            for (k, v) in column_dict.items():
+                print(k, " : ", v, " : ")
+
         # Make the parquet schema
         fields = []
         for (k, v) in column_dict.items():
@@ -84,31 +96,46 @@ def convert_sqlite_to_parquet(dbfile, pqfile, table,
         schema = pa.schema(fields)
         for k in schema:
             print(k)
-                
+
         done = False
 
         # Fetch the sqlite data
-        cmd = 'select * from ' + table
-        if order_by is not None:
-            cmd += ' order by ' + order_by
+        prev_row = 0
+        limit_row = min(row_per_group, total_row)
 
-        print('\nFetch command is:\n', cmd)
-            
-        cursor.execute(cmd)
+        writer = pq.ParquetWriter(pqfile, schema)
 
-        with pq.ParquetWriter(pqfile, schema) as writer:
-            while not done:
-                records =  cursor.fetchmany(row_per_group)
+        while limit_row <= total_row:
+            cmd = f"select * from {table} where rowid > {prev_row} and rowid <= {limit_row}"
+
+            if order_by is not None:
+                cmd += ' order by ' + order_by
+
+            print('\nFetch command is:\n', cmd)
+
+            if not dry:
+                cursor.execute(cmd)
+
+                records =  cursor.fetchall()
                 if len(records) == 0:
                     done = True
                     break
-                to_write = _transpose(records, column_dict, schema)
+                to_write = _transpose(records, column_dict, schema, verbose=verbose)
                 writer.write_table(to_write)
                 if len(records) < row_per_group:
-                    done = true
-    print('Conversion successful')                   #  ***DEBUG***
-        
-def compare_sqlite_parquet(sqlite_file, parquet_file, sqlite_table, id_column=None, n_rows=100,
+                    done = True
+                    break
+
+            prev_row = limit_row
+            limit_row = min(prev_row + row_per_group, total_row)
+
+            if dry and  prev_row == limit_row:
+                return
+
+    print('Conversion successful')
+
+def compare_sqlite_parquet(sqlite_file, parquet_file, sqlite_table,
+                           id_column=None, n_rows=100,
                            verbose=False, check_cols=None):
     '''
     Compare an sqlite table with one from a parquet file
@@ -150,7 +177,7 @@ def compare_sqlite_parquet(sqlite_file, parquet_file, sqlite_table, id_column=No
         return False
 
     if verbose: print('Opened parquet file')
-    
+
     # Check that schemas are compatible (i.e., column names match.  Ideally should
     # also check types are compatible)
     pq_lst = []
@@ -160,8 +187,6 @@ def compare_sqlite_parquet(sqlite_file, parquet_file, sqlite_table, id_column=No
         pq_lst.append(nm)
     pq_set = set(pq_lst)
 
-        
-    #sql_set_lc = set()
     sql_lst = []
     for n in sq_cur.description:
         sql_lst.append(str(n[0]))
@@ -195,7 +220,7 @@ def compare_sqlite_parquet(sqlite_file, parquet_file, sqlite_table, id_column=No
         sq_query = 'select * from {sqlite_table} limit {n_rows}'.format(**locals())
         sq_cur.execute(sq_query)
         df = pd.read_parquet(parquet_file, engine='pyarrow')
-        
+
         r = sq_cur.fetchone()
         while r is not None:
             pq_row = df.loc[lambda d: d[id_column] == r[id_column], :]
@@ -206,25 +231,29 @@ def compare_sqlite_parquet(sqlite_file, parquet_file, sqlite_table, id_column=No
                 warnings.warn('id column values not unique in parquet')
                 return False
             r = sq_cur.fetchone()
-            
+
 
     return True
-        
+
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Write parquet with content from sqlite or compare existing files')
     parser.add_argument('dbfile', type=str, help='input sqlite file; required')
     parser.add_argument('--pqfile', type=str,
                         help='parquet filepath. Defaults to test.parquet if output')
     parser.add_argument('--table', type=str, help='table to be written or compared parquet',
                         default='truth_summary')
-    parser.add_argument('--n-group', type=int, default=None,
+    parser.add_argument('--n-group', type=int, default=1,
                         help='number of row groups. By default compute from max_group_gbyte')
-    parser.add_argument('--max-group-gbyte', type=float, default=1.0,
-                        help='max allowed size in gbytes of a row group')
+    parser.add_argument('--max-group-gbyte', type=float, default=5.0,
+                        help='max allowed (sqlite input) size in gbytes of a row group')
     parser.add_argument('--check', action='store_true',
                         help='If set, compare sqlite and parquet')
+    parser.add_argument('--dry', action='store_true',
+                        help='If set describe output without creating it')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Print more; may be useful for debugging')
     parser.add_argument('--id-column', default=None)
     parser.add_argument('--n-check', type=int, default=10,
                         help='Number of rows from sqlite to check. Ignored in no check or id_colume is None')
@@ -232,17 +261,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print_callinfo(sys.argv[0], args)
-    #announce='\nCalled with arguments\ndbfile={}\npqfile={}\ntable={} n_groups={}\n'
-    #announce += 'max_group_gbyte={} '
-    #print(announce.format(args.dbfile, args.pqfile, args.table, args.n_group,
-    #                      args.max_group_gbyte))
 
     if not args.check:
         convert_sqlite_to_parquet(args.dbfile, args.pqfile, args.table,
-                                  n_group=args.n_group,
-                                  max_group_gbyte=args.max_group_gbyte, order_by = 'id')
+                                  n_group=args.n_group, dry=args.dry,
+                                  max_group_gbyte=args.max_group_gbyte,
+                                  order_by = 'rowid', verbose=args.verbose)
     else:
-        ok = compare_sqlite_parquet(args.dbfile, args.pqfile, args.table, args.id_column,
-                                    args.n_check)
+        ok = compare_sqlite_parquet(args.dbfile, args.pqfile, args.table,
+                                    id_column=args.id_column, verbose=args.verbose,
+                                    check_cols=args.n_check)
         if ok: print('Comparison succeeded')
-
