@@ -136,7 +136,7 @@ def write_lensed_sn_variability_truth(opsim_db_file, lensed_sne_truth_cat,
     logger.info('processing %s', lensed_sne_truth_cat)
     table_name = 'lensed_sn_variability_truth'
     create_table_sql = f'''create table if not exists {table_name}
-                           (id TEXT, obsHistID INT, MJD FLOAT, bandpass TEXT,
+                           (id TEXT, obsHistID INT, MJD DOUBLE, bandpass TEXT,
                             delta_flux FLOAT, num_photons FLOAT)'''
 
     # Read the opsim db data into a dataframe.

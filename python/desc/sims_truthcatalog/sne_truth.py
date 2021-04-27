@@ -100,7 +100,7 @@ class SNSynthPhotFactory:
         # Pass any attribute access requests to the SNObject instance.
         return getattr(self.sn_obj, attr)
 
-    
+
 def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
                    fp_radius, process_num, max_rows, dry_run, verbose):
     '''
@@ -115,21 +115,21 @@ def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
 
     # table_name should perhaps be yet another argument
     table_name = 'sn_variability_truth'
-    
-    if dry_run:           
+
+    if dry_run:
         print(f'Dry run: "finish" chunk {process_num}', file=lg)
         return
 
     # Create the Variability Truth table.
     table_name = 'sn_variability_truth'
     cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
-    (id TEXT, obsHistID INT, MJD FLOAT, bandpass TEXT,
+    (id TEXT, obsHistID INT, MJD DOUBLE, bandpass TEXT,
     delta_flux FLOAT)'''
     with sqlite3.connect(outfile) as conn:
         cursor = conn.cursor()
         cursor.execute(cmd)
         conn.commit()
-    
+
     # Get our batch from sne_db_file
     with sqlite3.connect(sne_db_file) as read_conn:
         sne_df = pd.read_sql(sne_db_query, read_conn)
@@ -174,14 +174,14 @@ def _process_chunk(outfile, logfile, sne_db_file, sne_db_query, opsim_df,
                            synth_phot.calcFlux(band)))
         if len(values) == 0:
             if (verbose):
-                print(f"Process {process_num}: no rows found for id {row.snid_in}", file=lg)                
+                print(f"Process {process_num}: no rows found for id {row.snid_in}", file=lg)
             continue
 
         with sqlite3.connect(outfile) as out_conn:
             cursor = out_conn.cursor()
             cursor.executemany(f'''INSERT INTO {table_name} VALUES (?,?,?,?,?)''', values)
             out_conn.commit()
-        
+
         num_rows += len(values)
         if verbose:
             print(f'Process {process_num} inserting {len(values)} rows for id {row.snid_in} ',
@@ -196,7 +196,7 @@ def _get_chunk_intervals(fpath, max_chunks):
           fpath (string) Path to properly-formatted yaml file containing
              intervals and (optional) max # SNe per chunk
           max_chunks (int) max # of returned intervals allowed
-    Returns:  
+    Returns:
           intervals - list of (start, end) values for chunks
     '''
     y = yload(open(fpath), Loader=FullLoader)
@@ -221,7 +221,7 @@ def _get_chunk_intervals(fpath, max_chunks):
         intervals.append((start, end))
         lens.append(end + 1 - start)
         ix += 1
-                                                                         
+
     if not 'max_chunk_size' in y:
         return intervals
     mcs = y['max_chunk_size']
@@ -266,7 +266,7 @@ class SNeTruthWriter:
             Name of the sqlite3 file to contain the truth tables.
         sne_db_file: str
             The sqlite3 file containing the SNe model parameters.
-        sne_limit: int 
+        sne_limit: int
             Maximum number of SNe to process. Default: no limit
         dry_run: boolean
             No actual db write.  Default: False
@@ -291,7 +291,7 @@ class SNeTruthWriter:
 
         # Used for normal case (no interval file) only
         self.per_process = int((self.rowid_max + max_parallel - 1)/max_parallel)
-        
+
     def write(self):
         '''
         Extract the column data from the SNe db file and write the
@@ -399,7 +399,7 @@ class SNeTruthWriter:
         if interval_file is not None:
             intervals = _get_chunk_intervals(interval_file,max_parallel)
             n_proc = len(intervals)
-            
+
         for i_p in range(n_proc):
             if interval_file is not None:
                 # compose row_cut using interval information
@@ -414,7 +414,7 @@ class SNeTruthWriter:
             else:
                 i_out = f'{self.outfile}_{i_p}'
                 i_log = chunk_log.replace('+', str(i_p))
-                
+
             p = Process(target=_process_chunk, name=f'proc{i_p}',
                         args=(i_out, i_log, self.sne_db_file, i_query, _opsim_df,
                               fp_radius, i_p, max_rows, self.dry_run,
@@ -483,9 +483,5 @@ def sne_merge_var(outfile, in_dir, in_pattern):
         conn.commit()
         conn.execute("detach database in_db")
     os.remove(tmp_merge)
-    
-    return True
-        
-        
 
-           
+    return True
