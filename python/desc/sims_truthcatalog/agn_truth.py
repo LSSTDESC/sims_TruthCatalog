@@ -294,7 +294,7 @@ def write_agn_variability_truth(agn_db_file, query, opsim_db_file,
     # Create the Variability Truth table.
     table_name = 'agn_variability_truth'
     cmd = f'''CREATE TABLE IF NOT EXISTS {table_name}
-              (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
+              (id TEXT, obsHistID INTEGER, MJD DOUBLE, bandpass TEXT,
               delta_flux FLOAT, num_photons FLOAT)'''
     if outfile is None:
         outfile = 'agn_variability_truth_cat.db'

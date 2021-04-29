@@ -128,7 +128,7 @@ def write_lensed_agn_variability_truth(opsim_db_file, lensed_agn_truth_cat,
     logger.info('processing %s', lensed_agn_truth_cat)
     table_name = 'lensed_agn_variability_truth'
     create_table_sql = f'''create table if not exists {table_name}
-                           (id TEXT, obsHistID INT, MJD FLOAT, bandpass TEXT,
+                           (id TEXT, obsHistID INT, MJD DOUBLE, bandpass TEXT,
                             delta_flux FLOAT, num_photons FLOAT)'''
     sed_file = find_sed_file('agnSED/agn.spec.gz')
     # Read the opsim db data into a dataframe.

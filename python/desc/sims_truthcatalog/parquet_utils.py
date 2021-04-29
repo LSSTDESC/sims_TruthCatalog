@@ -1,6 +1,5 @@
 import os
 import sys
-
 import pyarrow.parquet as pq
 import pyarrow as pa
 import numpy as np
@@ -80,6 +79,9 @@ def convert_sqlite_to_parquet(dbfile, pqfile, table,
         for (k,v) in column_dict.items():
             if v in type_translate.keys():
                 column_dict[k] = type_translate[v]
+                # Override in case MJD column is mislabeled as FLOAT
+                if k == 'MJD':
+                    column_dict[k] = 'float64'
             else:
                 print(f"For key {k} found unknown type {v}, setting to float32")
                 column_dict[k] = 'float32'

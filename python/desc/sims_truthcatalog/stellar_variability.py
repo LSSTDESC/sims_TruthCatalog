@@ -407,7 +407,7 @@ class StellarVariabilityTruth:
         # Create variabilty truth table in the output sqlite3 file.
         table_name = 'stellar_variability_truth'
         cmd = f'''create table if not exists {table_name}
-                  (id TEXT, obsHistID INTEGER, MJD FLOAT, bandpass TEXT,
+                  (id TEXT, obsHistID INTEGER, MJD DOUBLE, bandpass TEXT,
                    delta_flux FLOAT)'''
         output = sqlite3.connect(outfile)
         cursor = output.cursor()
